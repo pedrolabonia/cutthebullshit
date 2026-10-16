@@ -8,15 +8,14 @@ Exits 1 if anything the pipeline needs is missing (FAIL); WARN lines are worth a
 """
 
 import argparse
-import glob
 import importlib
 import os
-import re
 import shutil
 import subprocess
 import sys
 import tempfile
 
+from . import apps
 from . import config
 
 LINES = []
@@ -74,47 +73,31 @@ def check_packages():
         report("FAIL", "ffmpeg", str(e))
 
 
-def ae_scripting_allowed():
-    """"Allow Scripts to Write Files and Access Network" in the newest After Effects prefs: True / False / None (unknown)."""
-    def ver(p):
-        return [int(x) for x in re.findall(r"\d+", os.path.basename(p))] or [0]
-    root = os.path.expanduser("~/Library/Preferences/Adobe/After Effects")
-    for d in sorted(glob.glob(os.path.join(root, "*")), key=ver, reverse=True):
-        for f in glob.glob(os.path.join(d, "*Prefs.txt")):
-            m = re.search(r'"Pref_SCRIPTING_FILE_NETWORK_SECURITY" = "?(\d+)', open(f, errors="replace").read())
-            if m:
-                return m.group(1) == "1"
-    return None
-
-
 def check_apps(ping):
-    from . import supervise
-    ps, ae = config.PHOTOSHOP, config.AFTER_EFFECTS
-    src = lambda key: " (from settings)" if config.SETTINGS.get(key) else ""
-    report("ok" if ps else "FAIL", "Photoshop", (ps + src("photoshop_app")) if ps else
-           "not found in /Applications; set photoshop_app in the settings")
-    report("ok" if ae else "FAIL", "After Effects", (ae + src("after_effects_app")) if ae else
-           "not found in /Applications; set after_effects_app (or run with --no-ae / the aecomps step left out)")
+    ps, ae = apps.PHOTOSHOP, apps.AFTER_EFFECTS
+    src = lambda app: " (from settings)" if apps.from_settings(app) else ""
+    report("ok" if ps else "FAIL", "Photoshop", (ps + src("photoshop")) if ps else
+           "not found; set photoshop_app in the settings")
+    report("ok" if ae else "FAIL", "After Effects", (ae + src("ae")) if ae else
+           "not found; set after_effects_app (or leave out the aecomps step)")
     if ae:
-        allowed = ae_scripting_allowed()
+        allowed = apps.ae_scripting_allowed()
         if allowed is None:
             report("WARN", "AE scripting", "couldn't read the prefs; make sure Settings > Scripting & Expressions > "
                    "Allow Scripts to Write Files and Access Network is on")
         else:
             report("ok" if allowed else "FAIL", "AE scripting", "files + network allowed" if allowed else
                    "turn on Settings > Scripting & Expressions > Allow Scripts to Write Files and Access Network")
-    report("ok" if supervise.ui_access() else "WARN", "Accessibility",
-           "can close app dialogs" if supervise.ui_access() else
+    can = apps.can_close_dialogs()
+    report("ok" if can else "WARN", "Accessibility", "can close app dialogs" if can else
            "supervise can't close crash / alert dialogs (System Settings > Privacy & Security > Accessibility)")
     if ping:
         hint = ("no answer: allow your terminal to control it (System Settings > Privacy & Security > Automation), "
                 "and close any dialog open in the app")
-        if ps:
-            ok = supervise.ps_ok()
-            report("ok" if ok else "FAIL", "Photoshop answers", "" if ok else hint)
-        if ae:
-            ok = supervise.ae_ok()
-            report("ok" if ok else "FAIL", "After Effects answers", "" if ok else hint)
+        for app, name in (("photoshop", ps), ("ae", ae)):
+            if name:
+                ok = apps.app_alive(app)
+                report("ok" if ok else "FAIL", "%s answers" % apps.WHAT[app], "" if ok else hint)
 
 
 def main(argv=None):
@@ -141,8 +124,8 @@ def main(argv=None):
     check_packages()
 
     print("apps")
-    if sys.platform != "darwin":
-        report("FAIL", "platform", "%s: Photoshop / After Effects are driven with AppleScript, macOS only" % sys.platform)
+    if not apps.SUPPORTED:
+        report("FAIL", "platform", apps._backend.WHY)
     else:
         check_apps(args.apps)
 

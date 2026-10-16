@@ -122,35 +122,6 @@ def default_workers(gb_per_worker):
     return max(1, min(cores - 2, int((ram - APPS_GB) / gb_per_worker)))
 
 
-def find_app(setting, family):
-    """The Adobe app to drive: `setting` in the settings ("Adobe After Effects 2025"), else the newest installed
-    "<family> <year>" in /Applications. None when there is none."""
-    if SETTINGS.get(setting):
-        return SETTINGS[setting]
-    found = []
-    for d in ("/Applications", os.path.expanduser("~/Applications")):
-        try:
-            names = os.listdir(d)
-        except OSError:
-            continue
-        for n in names:
-            m = re.match(r"^%s (\d{4})(\.app)?$" % re.escape(family), n)
-            app = n[:-4] if n.endswith(".app") else n
-            if m and (os.path.isdir(os.path.join(d, n, app + ".app")) or n.endswith(".app")):
-                found.append((int(m.group(1)), app))
-    return max(found)[1] if found else None
-
-
-AFTER_EFFECTS = find_app("after_effects_app", "Adobe After Effects")
-PHOTOSHOP = find_app("photoshop_app", "Adobe Photoshop")
-
-
-def need_app(name, what):
-    if not name:
-        raise SystemExit("%s not found in /Applications; set %s_app in the settings" % (what, what.lower().replace(" ", "_")))
-    return name
-
-
 def one_thread():
     """Pool initializer: each worker uses one core (OpenCV / OpenMP / BLAS would otherwise each start a thread per core,
     and n workers x n threads only fight over the cores)."""

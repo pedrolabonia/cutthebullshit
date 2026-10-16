@@ -25,4 +25,4 @@ cutthebullshit = "cutthebullshit.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-cutthebullshit = ["*.applescript"]
+"cutthebullshit.apps" = ["*.applescript"]

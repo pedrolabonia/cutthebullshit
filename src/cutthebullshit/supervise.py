@@ -27,19 +27,16 @@ Summary of failed / partial folders: <output>/RUN NN/_supervise_summary.txt (and
 import argparse
 import json
 import os
-import shutil
 import signal
 import subprocess
 import sys
 import threading
 import time
 
+from . import apps
 from . import eta
-from . import prep
 from . import pipeline
-from .aecomps import AE_APP, RESULT
-from .cleanplate import PS_APP
-from .config import need_app, OUTPUT_DIR, is_excluded, list_frames, load_json, resolve_run, run_name, run_roots, state_path as tool_file, short_name, photo_folders
+from .config import load_json, photo_folders, run_name, run_roots, short_name
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PY = sys.executable
@@ -48,7 +45,6 @@ ETA_EVERY = 300                  # s between the combined folder / whole-run ETA
 FOLDER_OVERHEAD = 20             # s per folder job besides frame work (recorte start, app checks)
 HANG_MIN = 25                    # longest legit silence: one Photoshop attempt (cleanplate gives up after 16 min)
 ATTEMPTS = 3
-PS_NAME = PS_APP
 STEP_APP = {"cleanplate": "photoshop", "aecomps": "ae"}
 
 
@@ -63,69 +59,17 @@ def fmt(sec):
 
 # ---------------------------------------------------------------- apps
 
-def osa(lines, timeout):
-    cmd = ["osascript"]
-    for l in lines:
-        cmd += ["-e", l]
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        return r.returncode, r.stdout.strip() + r.stderr.strip()
-    except subprocess.TimeoutExpired:
-        return -1, "timeout"
-
-
-def ps_ok():
-    rc, out = osa(["with timeout of 60 seconds", 'tell application "%s" to do javascript "\'ps-ok\'"' % PS_APP,
-                   "end timeout"], 90)
-    return rc == 0 and "ps-ok" in out
-
-
-AE_PING = tool_file("_supervise_ae_ping.jsx")
-
-
-def ae_ok():
-    with open(AE_PING, "w") as fh:
-        fh.write('var f = new File(%s); f.open("w"); f.write("ae-ok"); f.close();' % json.dumps(RESULT))
-    if os.path.exists(RESULT):
-        os.remove(RESULT)
-    osa(["with timeout of 120 seconds", 'tell application "%s" to DoScriptFile "%s"' % (AE_APP, AE_PING),
-         "end timeout"], 150)
-    for _ in range(20):
-        if os.path.exists(RESULT):
-            return open(RESULT).read().strip() == "ae-ok"
-        time.sleep(0.5)
-    return False
-
-
-def kill(pattern):
-    subprocess.run(["pkill", "-9", "-f", pattern], capture_output=True)
-
-
-PROCESS = {"photoshop": PS_NAME, "ae": "After Effects"}
-
-
-def ui_access():
-    """Can we click other apps' dialogs? (Accessibility permission for the app that started this.)"""
-    rc, out = osa(['tell application "System Events" to tell process "Finder" to get count of windows'], 30)
-    return rc == 0
-
-
 def dismiss(app, force=False):
-    """Close the modal dialogs of an app (crash recovery, autosave, scratch disk, alerts); logs what it clicked.
+    """Close the app's modal dialogs (crash recovery, autosave, scratch disk, alerts); logs what it clicked.
     force: if no dialog button was found, bring the app to the front and press Return."""
     try:
-        r = subprocess.run(["osascript", os.path.join(HERE, "dismiss_dialogs.applescript"), PROCESS[app]]
-                           + (["force"] if force else []), capture_output=True, text=True, timeout=120)
-    except subprocess.TimeoutExpired:
+        clicked = apps.close_dialogs(app, force)
+    except PermissionError:
+        log("cannot close %s dialogs: no Accessibility permission" % app)
         return False
-    if r.returncode != 0:
-        if "assistive access" in r.stderr:
-            log("cannot close %s dialogs: no Accessibility permission" % app)
-        return False
-    if r.stdout.strip():
-        log("closed %s dialog(s): %s" % (app, r.stdout.strip()))
-        return True
-    return False
+    if clicked:
+        log("closed %s dialog(s): %s" % (app, clicked))
+    return bool(clicked)
 
 
 def wait_until(check, minutes, app):
@@ -141,34 +85,24 @@ def wait_until(check, minutes, app):
 
 def restart(app):
     log("restarting %s" % app)
-    if app == "photoshop":
-        kill("%s.app/Contents/MacOS" % PS_NAME)
-        time.sleep(10)
-        subprocess.run(["open", "-a", PS_NAME])
-        ok = wait_until(ps_ok, 10, app)
-        if ok:                         # recovered documents from a crash: close them
-            osa(["with timeout of 120 seconds", 'tell application "%s" to do javascript '
-                 '"while (app.documents.length) app.activeDocument.close(SaveOptions.DONOTSAVECHANGES); \'done\'"' % PS_APP,
-                 "end timeout"], 150)
-    else:
-        kill("%s.app/Contents/MacOS/After Effects" % AE_APP)
-        time.sleep(10)
-        subprocess.run(["open", "-a", AE_APP])
-        ok = wait_until(ae_ok, 10, app)
+    apps.kill_app(app)
+    time.sleep(10)
+    apps.launch_app(app)
+    ok = wait_until(lambda: apps.app_alive(app), 10, app)
+    if ok and app == "photoshop":      # recovered documents from a crash: close them
+        apps.run_ps_javascript("while (app.documents.length) app.activeDocument.close(SaveOptions.DONOTSAVECHANGES); 'done'",
+                               timeout=120)
     log("%s restart %s" % (app, "ok" if ok else "FAILED (will try again)"))
     return ok
 
 
-CHECKS = {"photoshop": ps_ok, "ae": ae_ok}
-
-
-def ensure(apps):
-    for app in apps:
+def ensure(names):
+    for app in names:
         for _ in range(3):
-            if CHECKS[app]():
+            if apps.app_alive(app):
                 break
             log("%s not answering" % app)
-            if dismiss(app, force=True) and CHECKS[app]():      # a dialog was in the way
+            if dismiss(app, force=True) and apps.app_alive(app):      # a dialog was in the way
                 break
             restart(app)
 
@@ -281,11 +215,12 @@ def main(argv=None):
                                                             "(restarts then need --run with its number)")
     ap.add_argument("--selftest", action="store_true", help="restart Photoshop and After Effects once and check them")
     args = ap.parse_args(argv)
-    need_app(PS_APP, "Photoshop")
+    apps.need_app("photoshop")
     if not args.no_ae:
-        need_app(AE_APP, "After Effects")
+        apps.need_app("ae")
+    apps.keep_awake()
 
-    if not ui_access():
+    if not apps.can_close_dialogs():
         log("WARNING: no Accessibility permission - dialogs that block Photoshop / After Effects after a crash "
             "can't be closed automatically (System Settings > Privacy & Security > Accessibility > the app you run this from)")
     if args.selftest:

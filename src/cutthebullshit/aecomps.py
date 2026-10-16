@@ -40,15 +40,14 @@ import glob
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 
 from . import frames
 from . import progress
-from .config import AFTER_EFFECTS, need_app, BG, SHADOW_OPACITY, OUTPUT_DIR, parse_bg, state_path, read_dir, shot_key, split_run
+from . import apps
+from .config import BG, SHADOW_OPACITY, OUTPUT_DIR, parse_bg, state_path, read_dir, shot_key, split_run
 
-AE_APP = AFTER_EFFECTS   # the newest installed After Effects, or after_effects_app in the settings
 RESULT = state_path("ae_result.json")     # After Effects writes each job's result here
 SEQ_RX = re.compile(r"^(?P<seq>.+)\.(?P<num>\d{4})\.exr$")
 INPUTS = ("beauty", "subject", "shadow", "bounce")     # <seq>_<input>.####.png next to the frames in the work folder
@@ -327,14 +326,8 @@ def run_jsx(job, work_dir, template=JSX, name="_aecomps.jsx"):
         fh.write(template % {"job": json.dumps(job)})
     if os.path.exists(RESULT):
         os.remove(RESULT)
-    # many precomps take minutes: AppleScript's default 2 min timeout would give up while AE keeps working
-    try:
-        subprocess.run(["osascript", "-e", "with timeout of 3600 seconds", "-e",
-                        'tell application "%s" to DoScriptFile "%s"' % (need_app(AE_APP, "After Effects"), jsx), "-e", "end timeout"],
-                       capture_output=True, text=True, timeout=3660)
-    except subprocess.TimeoutExpired:
-        pass
-    for _ in range(1200):                    # the result file can land after osascript returns
+    apps.run_ae_script(jsx, timeout=3600)    # many precomps take minutes
+    for _ in range(1200):                    # the result file can land after the call returns
         if os.path.exists(RESULT):
             time.sleep(0.5)
             break

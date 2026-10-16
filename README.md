@@ -391,13 +391,15 @@ cutthebullshit prores --run 1 "S02 Garden" --passes object,multiply,screen --for
 - What the tool learns (time per step) and the scripts it hands to After Effects are kept in `~/.cutthebullshit/`
   (`CUTTHEBULLSHIT_HOME` moves it).
 - Runs made by older versions with EXR frames still work after `pip install -e ".[exr]"`.
-- macOS only for now: the apps are driven with AppleScript. Windows would need the same small set of app calls written
-  for it.
+- macOS only for now: the apps are driven with AppleScript. All of that lives in `src/cutthebullshit/apps/`, so
+  Windows support means adding one backend module next to `_mac.py` (After Effects' `AfterFX.exe -r`, Photoshop's COM
+  interface, `taskkill`, `pywinauto` for dialogs).
 
 ```
 src/cutthebullshit/   cli.py (the command), pipeline.py (run), supervise.py, prep.py, cleanplate.py, passes.py,
                       layers.py, preview.py, prores.py, aecomps.py, qc.py, status.py, doctor.py,
-                      config.py (settings), frames.py, eta.py, progress.py
+                      config.py (settings), frames.py, eta.py, progress.py,
+                      apps/ (driving Photoshop and After Effects: the only platform-specific code)
 scripts/              install.sh, run_supervised.sh
 run_example.sh        one folder of photos, start to finish
 ```

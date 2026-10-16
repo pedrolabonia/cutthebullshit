@@ -18,7 +18,6 @@ import glob
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 
@@ -28,10 +27,10 @@ import numpy as np
 from . import progress
 
 from . import frames as fr
-from .config import PHOTOSHOP, need_app, remove_file
+from . import apps
+from .config import remove_file
 from .prep import write_exr
 
-PS_APP = PHOTOSHOP       # the newest installed Photoshop, or photoshop_app in the settings
 SEQ_FILE_RX = re.compile(r"^(?P<seq>.+)\.(?P<num>\d{4})\.exr$")
 
 
@@ -219,24 +218,16 @@ def photoshop_fill(src_tif, dst_tif, polys, work_dir, grow=60, subject=True):
     with open(jsx, "w") as fh:
         fh.write(JSX % {"job": json.dumps({"src": src_tif, "dst": dst_tif, "polys": polys, "grow": grow,
                                            "subject": subject})})
-    # AppleScript gives up after 2 min by default; a busy Photoshop can take longer on one frame
-    cmd = ["osascript", "-e", "with timeout of 900 seconds", "-e",
-           'tell application "%s" to do javascript (read POSIX file "%s" as «class utf8»)' % (need_app(PS_APP, "Photoshop"), jsx),
-           "-e", "end timeout"]
     err = ""
     for attempt in range(3):
         if attempt:
             close_doc(os.path.basename(src_tif))
             print("    Photoshop retry %d/2 (%s)" % (attempt, err[:120]), flush=True)
             time.sleep(5)
-        try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=960)
-        except subprocess.TimeoutExpired:
-            err = "no answer in 16 min"
-            continue
-        if r.returncode == 0 and "ok" in r.stdout:
-            return r.stdout.strip()
-        err = (r.stdout.strip() + " " + r.stderr.strip()).strip()
+        ok, out = apps.run_ps_javascript(path=jsx, timeout=900)     # a busy Photoshop can take minutes on one frame
+        if ok and "ok" in out:
+            return out
+        err = out
     raise RuntimeError("Photoshop: %s" % err)
 
 
@@ -244,9 +235,7 @@ def close_doc(name):
     """Close a document left open by a failed attempt, without saving."""
     js = ("for (var i = app.documents.length - 1; i >= 0; i--) { if (app.documents[i].name == '%s') "
           "app.documents[i].close(SaveOptions.DONOTSAVECHANGES); } 'ok';" % name.replace("'", ""))
-    subprocess.run(["osascript", "-e", "with timeout of 60 seconds", "-e",
-                    'tell application "%s" to do javascript "%s"' % (need_app(PS_APP, "Photoshop"), js.replace('"', '\\"')), "-e", "end timeout"],
-                   capture_output=True, text=True, timeout=90)
+    apps.run_ps_javascript(js, timeout=60)
 
 
 def clean_frame(src, seq, num, grow, work_dir, select="photoshop", keep_debug=False):
