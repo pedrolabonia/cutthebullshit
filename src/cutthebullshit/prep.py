@@ -2,13 +2,13 @@
 
 Stop-motion folders (a parent folder ends in -anim / _anim) become one sequence per folder,
 numbered by the take's own frame number:
-    .../teapot-anim/RAW/S01_teapot-anim_v1_0003_0001_014_01_X1_0033.arw
- -> tmp_read/RUN NN/<path below the mirror root>/S01_teapot-anim_v1_beauty.0003.png
+    .../teapot-anim/RAW/S01_teapot-anim_v1_0003_0001_014_01_X1_0033.arw     (any RAW, or TIFF / JPEG / PNG)
+ -> <work>/RUN NN/<path below the mirror root>/S01_teapot-anim_v1_beauty.0003.png
 Every other photo is a still, a single-frame item of its own:
     .../spoon/v3/RAW/S01_spoon_v3_0002_0001_025_01_X1_0004.arw  ->  S01_spoon_v3_0002_beauty.0001.png
 
 That <seq>_beauty PNG is the photo all the way through: cleanplate and passes read it, After Effects uses it.
-Frames are 16-bit sRGB, 4752x3168 (half of the 9504x6336 delivery frame), denoised
+Frames are 16-bit sRGB at half the camera's size (half_size / crop in the settings), denoised
 (wavelet denoise in the RAW development by default, --denoise strong adds non-local means), at the camera's own
 exposure and white balance (--exposure N brightens with a soft highlight roll-off). A _frames.csv next to them maps frame numbers back
 to the original photo names.
@@ -30,20 +30,26 @@ import numpy as np
 from . import progress
 
 from . import frames as fr
+from .config import CROP, HALF_SIZE, PHOTO_FOLDER, SEQUENCE_PATTERN, STOP_MOTION_SUFFIXES, is_raw
 from .config import MIRROR_DEPTH, default_workers, one_thread, frame_name, list_frames, mirror_dir, mirror_parts, resolve_run, run_roots
 
-FULL_H, FULL_W = 6336, 9504          # delivery frame: Sony 9568x6376 center-cropped, like the .bat
-HALF_H, HALF_W = FULL_H // 2, FULL_W // 2
-SEQ_RX = re.compile(r"^(?P<base>.+?_v\d+)_(?P<num>\d+)_")   # S01_teapot-anim_v1_0003_...
-
-
-ANIM_RX = re.compile(r"[-_]anim$", re.I)   # stop-motion object folders: teapot-anim, cup_anim, ...
+SEQ_RX = re.compile(SEQUENCE_PATTERN)       # settings: sequence_pattern (default S01_teapot-anim_v1_0003_...)
 
 
 def is_animation(src):
-    """A photo is a stop-motion frame when one of its parent folders ends in -anim / _anim
-    (versions inside it, e.g. on-our-way-anim/v1, are separate animations). Everything else is a still."""
-    return any(ANIM_RX.search(p) for p in mirror_parts(src))
+    """A photo is a stop-motion frame when one of its parent folders ends in a stop-motion suffix (default -anim /
+    _anim; versions inside it, e.g. teapot-anim/v1, are separate animations). Everything else is a still."""
+    return any(p.lower().endswith(tuple(s.lower() for s in STOP_MOTION_SUFFIXES)) for p in mirror_parts(src))
+
+
+def anim_name(src):
+    """A stop-motion's name from its folders, for photos whose names don't follow sequence_pattern: the stop-motion
+    folder and any below it except the photo folder (teapot-anim/v1/RAW -> teapot-anim_v1)."""
+    parts = mirror_parts(src)
+    ends = tuple(x.lower() for x in STOP_MOTION_SUFFIXES)
+    i = max(j for j, p in enumerate(parts) if p.lower().endswith(ends))
+    keep = [p for p in parts[i:] if not (PHOTO_FOLDER and p == PHOTO_FOLDER)]
+    return re.sub(r"\s+", "-", "_".join(keep))
 
 
 def sequence_name(src, index):
@@ -55,7 +61,7 @@ def sequence_name(src, index):
     if is_animation(src):
         if m:
             return m.group("base"), int(m.group("num"))
-        return os.path.basename(os.path.dirname(os.path.dirname(src))) or "frames", index
+        return anim_name(src), index
     if m:
         return "%s_%s" % (m.group("base"), m.group("num")), 1
     return frame_name(src), 1
@@ -65,20 +71,38 @@ RAW_NOISE_THR = 1000     # LibRaw wavelet denoise threshold (0 = off): ~3x less 
 
 
 def develop_arw(path, noise_thr=RAW_NOISE_THR):
-    """RAW -> linear RGB at half resolution (camera WB, no auto bright, sRGB primaries).
+    """A photo -> linear RGB (sRGB primaries), at half size unless half_size = false in the settings, centre-cropped to
+    `crop` (full-size [width, height]) if set.
 
-    half_size merges each 2x2 Bayer quad instead of demosaicing: 4x faster and less noisy. noise_thr runs
-    LibRaw's wavelet denoise on the RAW data (free in time)."""
-    import rawpy
-    with rawpy.imread(path) as r:
-        a = r.postprocess(half_size=True, use_camera_wb=True, no_auto_bright=True, gamma=(1, 1), output_bps=16,
-                          output_color=rawpy.ColorSpace.sRGB, user_flip=0, noise_thr=noise_thr or None,
-                          highlight_mode=rawpy.HighlightMode.Blend)   # clipped channels blend to white, no flat patches
-    a = a.astype(np.float32) / 65535.0
-    h, w = a.shape[:2]
-    if h >= HALF_H and w >= HALF_W:
-        y0, x0 = (h - HALF_H) // 2, (w - HALF_W) // 2
-        a = a[y0:y0 + HALF_H, x0:x0 + HALF_W]
+    RAW (any format LibRaw reads): camera white balance, no auto brightness; half size merges each 2x2 Bayer quad
+    instead of demosaicing (4x faster, less noisy); noise_thr runs LibRaw's wavelet denoise on the RAW data.
+    TIFF / JPEG / PNG: already developed, taken as sRGB (8 or 16 bit) and only made linear / halved / cropped."""
+    if is_raw(path):
+        import rawpy
+        with rawpy.imread(path) as r:
+            a = r.postprocess(half_size=HALF_SIZE, use_camera_wb=True, no_auto_bright=True, gamma=(1, 1), output_bps=16,
+                              output_color=rawpy.ColorSpace.sRGB, user_flip=0, noise_thr=noise_thr or None,
+                              highlight_mode=rawpy.HighlightMode.Blend)   # clipped channels blend to white, no flat patches
+        a = a.astype(np.float32) / 65535.0
+        scale = 2 if HALF_SIZE else 1
+    else:
+        import cv2
+        img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+        if img is None:
+            raise IOError("can't read %s" % path)
+        img = img[..., :3] if img.ndim == 3 else np.dstack([img] * 3)
+        s = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype(np.float32) / (65535.0 if img.dtype == np.uint16 else 255.0)
+        a = np.where(s <= 0.04045, s / 12.92, ((s + 0.055) / 1.055) ** 2.4).astype(np.float32)
+        scale = 1
+        if HALF_SIZE:
+            a = cv2.resize(a, (a.shape[1] // 2, a.shape[0] // 2), interpolation=cv2.INTER_AREA)
+            scale = 2
+    if CROP:
+        cw, ch = int(CROP[0]) // scale, int(CROP[1]) // scale
+        h, w = a.shape[:2]
+        if h >= ch and w >= cw:
+            y0, x0 = (h - ch) // 2, (w - cw) // 2
+            a = a[y0:y0 + ch, x0:x0 + cw]
     return np.ascontiguousarray(a)
 
 
@@ -108,7 +132,7 @@ def tone(lin, midtones=MIDTONES, contrast=CONTRAST):
 
 
 def camera_jpeg_linear(src):
-    """The camera's own JPEG embedded in the .arw (Sony: 1616x1080), as linear float RGB."""
+    """The camera's own JPEG preview embedded in a RAW, as linear float RGB (IOError if it has none)."""
     import cv2
     import rawpy
     with rawpy.imread(src) as r:
@@ -180,6 +204,18 @@ def write_exr(path, rgb):
 PREP_GB = 1.4       # peak RAM of one develop_frame (measured: 1.35 GB)
 
 
+def camera_curves_for(src, lin):
+    """The camera look of a sequence, fitted on this photo: [] when there is none to match (an already developed
+    TIFF / JPEG keeps its own look; a RAW without an embedded JPEG preview gets the plain development)."""
+    if not is_raw(src):
+        return []
+    try:
+        return fit_camera_look(lin, camera_jpeg_linear(src))
+    except Exception as e:
+        print("  no camera look for %s (%s): plain development" % (os.path.basename(src), e), flush=True)
+        return []
+
+
 def develop_frame(job):
     """One frame, in its own process: RAW -> look -> 16-bit beauty PNG. curves None (camera look) = fit them on this
     frame and save them as the sequence's _look json. Returns (index, name, error or None, seconds, max, curves)."""
@@ -187,17 +223,18 @@ def develop_frame(job):
     t = time.time()
     try:
         if os.path.getsize(src) == 0:
-            raise IOError("0-byte file (Dropbox online-only placeholder? make it available offline)")
+            raise IOError("0-byte file (a cloud online-only placeholder? make it available offline)")
         # camera exposure and white balance as shot: every frame gets its own clean plate, so no matching
         lin = develop_arw(src, RAW_NOISE_THR if denoise in ("raw", "strong") else 0)
         if denoise == "strong":
             lin = nlmeans(lin)
         if look == "camera":
             if curves is None:
-                curves = fit_camera_look(lin, camera_jpeg_linear(src))
+                curves = camera_curves_for(src, lin)
                 with open(look_path, "w") as fh:
                     json.dump(curves, fh)
-            lin = apply_camera_look(lin, curves)
+            if curves:                                # [] = no camera look to match (a TIFF / JPEG, or no preview)
+                lin = apply_camera_look(lin, curves)
             if exposure or midtones != 1 or contrast:
                 lin = tone(apply_exposure(lin, exposure), midtones, contrast)
         else:
@@ -210,9 +247,9 @@ def develop_frame(job):
 
 def prep_folder(src_dir, depth, force=False, denoise="raw", read_root=None, exposure=0.0, midtones=MIDTONES,
                 contrast=CONTRAST, look="camera", workers=None):
-    frames = [f for f in list_frames(src_dir) if f.lower().endswith(".arw")]
+    frames = list_frames(src_dir)
     if not frames:
-        print("no .arw in %s" % src_dir)
+        print("no photos in %s" % src_dir)
         return 0
     out_dir = mirror_dir(read_root, frames[0], depth)
     os.makedirs(out_dir, exist_ok=True)
@@ -261,7 +298,7 @@ def prep_folder(src_dir, depth, force=False, denoise="raw", read_root=None, expo
                     continue
                 # the sequence's first photo is done already but its curve file is gone: fit it again from it
                 dev = develop_arw(seq_first, RAW_NOISE_THR if denoise in ("raw", "strong") else 0)
-                curves[base] = fit_camera_look(dev, camera_jpeg_linear(seq_first))
+                curves[base] = camera_curves_for(seq_first, dev)
                 with open(path, "w") as fh:
                     json.dump(curves[base], fh)
         jobs.append((i, src, base, out))
@@ -298,7 +335,7 @@ def prep_folder(src_dir, depth, force=False, denoise="raw", read_root=None, expo
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("sources", nargs="+", help="folders with .arw frames (e.g. <photos>/S01 Kitchen/teapot-anim/RAW)")
+    ap.add_argument("sources", nargs="+", help="photo folders (RAW of any camera, or TIFF / JPEG / PNG), e.g. <photos>/S01 Kitchen/teapot-anim/RAW")
     ap.add_argument("--depth", type=int, default=MIRROR_DEPTH, help="parent folders to mirror (default %(default)s)")
     ap.add_argument("--force", action="store_true", help="redo frames that already exist")
     ap.add_argument("--denoise", choices=("off", "raw", "strong"), default="raw",
@@ -307,7 +344,7 @@ def main(argv=None):
     ap.add_argument("--run", default="new", help="'new' (default), 'latest' or a run number")
     ap.add_argument("--workers", type=int, default=None, help="frames developed at once (default: cores - 2, capped by RAM)")
     ap.add_argument("--look", choices=("camera", "linear"), default="camera",
-                    help="camera = match the camera's own JPEG look embedded in the .arw (default); linear = the "
+                    help="camera = match the camera's own JPEG preview embedded in each RAW (default); linear = the "
                          "plain development + --exposure / --midtones / --contrast")
     ap.add_argument("--exposure", type=float, default=None,
                     help="brighten by this many stops before the 8-bit outputs (default %(default)s, about the look of the "

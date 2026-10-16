@@ -1,23 +1,63 @@
-# cutthebullshit settings. Copy to ~/.cutthebullshit/config.toml (or ./cutthebullshit.toml where you run it, or point
-# CUTTHEBULLSHIT_CONFIG at it). Every setting is optional; paths accept ~.
+# cutthebullshit settings - an example. Copy it to ~/.cutthebullshit/config.toml (used everywhere), or to
+# ./cutthebullshit.toml in the folder you run from, or pass it with `cutthebullshit --config FILE ...`.
+# Every setting is optional (the values below are the defaults unless they say otherwise); paths accept ~.
 
-# where the work happens: developed frames, masks and passes (tmp_read), layers / previews / AE projects (tmp_write),
-# one "RUN NN" folder per run inside each. A fast local / external drive is best (~60 MB per photo).
-tmp_read  = "~/cutthebullshit-work/tmp_read"
-tmp_write = "~/cutthebullshit-work/tmp_write"
+# ---------------------------------------------------------------- folders
+# Where the in-between files go: developed frames, subject masks, shadow / bounce passes. They are also the After
+# Effects footage, so keep them until the project is collected. A fast local / external drive (~60 MB per photo).
+# `cutthebullshit --work DIR` overrides it.
+# work_dir = "~/cutthebullshit/work"
 
-# where `cutthebullshit publish` copies a run (RUN NN inside it), e.g. a shared Dropbox folder. Unset: no publishing.
-# publish_root = "~/Dropbox/My Job/Runs/PUBLISH"
+# Where the results go: LAYERS, LAYOUTS, PREVIEWS, PRORES and the After Effects project, one "RUN NN" folder per run.
+# `cutthebullshit --output DIR` overrides it.
+# output_dir = "~/cutthebullshit/output"
 
-# what the PREVIEW renders and the After Effects scene comps sit on: an image (fit to height), a colour
-# ("#rrggbb", "white", "grey", "0.5", "200,190,170") or "none"
+# Folders the tool never deletes anything in, besides ~/Dropbox: there it only adds and overwrites files.
+# protected = ["~/Shared Drives/My Job"]
+
+# ---------------------------------------------------------------- the look
+# What the PREVIEW renders and the After Effects scene comps sit on: an image (fit to the frame's height),
+# a colour ("#rrggbb", "white", "grey", "0.5", "200,190,170") or "none" (previews over middle grey). `--bg` overrides it.
 background = "none"
 
-# the organized photo tree: <source_root>/<scene>/<object>/[v1/]RAW/*.arw. Everything below the folder named mirror_root
-# is recreated inside the RUN folders (unset: the last 3 folders of each RAW folder's path). Stop-motions are folders
-# whose name ends in -anim / _anim; folders named "CUT OUT" are skipped.
-# source_root = "~/Photos/My Job/OBJECTS"
+# ---------------------------------------------------------------- your photos
+# How your photo folders are laid out. The default fits a tree like
+#     <source_root>/S01 Kitchen/teapot-anim/v1/RAW/S01_teapot-anim_v1_0003_IMG1234.ARW
+# but a single folder of photos works too: pass it to `cutthebullshit run` (see run_example.sh).
+
+# the folders that hold an object's photos when you pass a folder above them ("" = any folder with photos in it)
+photo_folder = "RAW"
+
+# what counts as a photo. Default: every common camera RAW (.arw .cr2 .cr3 .nef .dng .raf .orf .rw2 ...) plus
+# already developed .tif / .jpg / .png (used as they are, no RAW development)
+# photo_extensions = [".arw", ".cr3", ".nef", ".dng", ".tif", ".jpg"]
+
+# folders that are never processed (any case), e.g. the hand-made cut-outs
+exclude_folders = ["cut out"]
+
+# a folder whose name ends in one of these is a stop-motion: its photos become one image sequence (12 fps)
+# instead of one still each
+stop_motion_suffixes = ["-anim", "_anim"]
+
+# photo file name -> (sequence, frame number). `base` names the sequence (a take), `num` is the frame.
+# The default reads S01_teapot-anim_v1_0003_<anything> as frame 3 of S01_teapot-anim_v1. Names that don't
+# match are numbered in folder order (a stop-motion takes its folder's name).
+sequence_pattern = '^(?P<base>.+?_v\d+)_(?P<num>\d+)_'
+
+# develop at half size (2x2 pixels merged: 4x faster, cleaner; a 24 MP photo gives a ~6 MP frame)
+half_size = true
+
+# centre crop, [width, height] in full-size pixels, e.g. to cut a 3:2 frame out of a wider sensor. Unset: no crop.
+# crop = [9504, 6336]
+
+# the tree below this folder name is recreated inside the RUN folders (S01 Kitchen/teapot-anim/v1/...).
+# Unset: the last 3 folders of each photo folder's path.
 # mirror_root = "OBJECTS"
 
-# folders the tool must never delete anything in, besides ~/Dropbox (it only adds and overwrites there)
-# protected = ["~/Shared Drives/My Job"]
+# the photo tree `cutthebullshit status` checks against a run
+# source_root = "~/Photos/My Job/OBJECTS"
+
+# ---------------------------------------------------------------- apps (macOS)
+# Default: the newest "Adobe Photoshop <year>" / "Adobe After Effects <year>" in /Applications.
+# photoshop_app = "Adobe Photoshop 2026"
+# after_effects_app = "Adobe After Effects 2026"

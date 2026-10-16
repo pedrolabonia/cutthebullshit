@@ -1,6 +1,6 @@
 """Clean-plate step: build one clean plate per frame with Photoshop Content-Aware Fill.
 
-For each developed frame (tmp_read/.../<seq>_beauty.####.png, 16-bit; an older run's <seq>.####.exr):
+For each developed frame (<work>/.../<seq>_beauty.####.png, 16-bit; an older run's <seq>.####.exr):
   1. find what differs from the reference plate (object + shadow + bounce light), grow it generously,
      and turn it into selection polygons
   2. Photoshop: open the frame (16-bit sRGB TIFF), select those polygons, Content-Aware Fill, save
@@ -10,7 +10,7 @@ The Photoshop TIFFs are deleted once the plate is written (--keep-debug keeps th
 
 Outside the selection the plate is the frame's own pixels, so the background matches exactly.
 
-    cutthebullshit cleanplate <tmp_read sequence folder> [--frames 4,5] [--grow 60]
+    cutthebullshit cleanplate <work folder of a sequence> [--frames 4,5] [--grow 60]
 """
 
 import argparse
@@ -28,10 +28,10 @@ import numpy as np
 from . import progress
 
 from . import frames as fr
-from .config import remove_file
+from .config import PHOTOSHOP, need_app, remove_file
 from .prep import write_exr
 
-PS_APP = "com.adobe.Photoshop"
+PS_APP = PHOTOSHOP       # the newest installed Photoshop, or photoshop_app in the settings
 SEQ_FILE_RX = re.compile(r"^(?P<seq>.+)\.(?P<num>\d{4})\.exr$")
 
 
@@ -221,7 +221,7 @@ def photoshop_fill(src_tif, dst_tif, polys, work_dir, grow=60, subject=True):
                                            "subject": subject})})
     # AppleScript gives up after 2 min by default; a busy Photoshop can take longer on one frame
     cmd = ["osascript", "-e", "with timeout of 900 seconds", "-e",
-           'tell application id "%s" to do javascript (read POSIX file "%s" as «class utf8»)' % (PS_APP, jsx),
+           'tell application "%s" to do javascript (read POSIX file "%s" as «class utf8»)' % (need_app(PS_APP, "Photoshop"), jsx),
            "-e", "end timeout"]
     err = ""
     for attempt in range(3):
@@ -245,7 +245,7 @@ def close_doc(name):
     js = ("for (var i = app.documents.length - 1; i >= 0; i--) { if (app.documents[i].name == '%s') "
           "app.documents[i].close(SaveOptions.DONOTSAVECHANGES); } 'ok';" % name.replace("'", ""))
     subprocess.run(["osascript", "-e", "with timeout of 60 seconds", "-e",
-                    'tell application id "%s" to do javascript "%s"' % (PS_APP, js.replace('"', '\\"')), "-e", "end timeout"],
+                    'tell application "%s" to do javascript "%s"' % (need_app(PS_APP, "Photoshop"), js.replace('"', '\\"')), "-e", "end timeout"],
                    capture_output=True, text=True, timeout=90)
 
 
@@ -310,7 +310,7 @@ def clean_frame(src, seq, num, grow, work_dir, select="photoshop", keep_debug=Fa
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("folder", help="tmp_read folder with developed frames (<seq>_beauty.####.png or <seq>.####.exr)")
+    ap.add_argument("folder", help="work folder with developed frames (<seq>_beauty.####.png or <seq>.####.exr)")
     ap.add_argument("--frames", help="comma-separated frame numbers (default: all)")
     ap.add_argument("--grow", type=int, default=60, help="grow the object+shadow area by this many px (default %(default)s)")
     ap.add_argument("--select", choices=("photoshop", "difference"), default="photoshop",

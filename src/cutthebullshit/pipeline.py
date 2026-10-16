@@ -1,25 +1,24 @@
 """Full cut-out workflow for organized object folders (<photos>/<scene>/<object>/.../RAW).
 
-Every full run gets its own folders: tmp_read/RUN NN/<scene>/<object>/... and
-tmp_write/RUN NN/{LAYERS/<scene>/<object>/..., LAYOUTS/ (flat), PREVIEWS/ (flat), recorte_precomps.aep}.
+Every run has its own folders in the work folder (work_dir/RUN NN/<scene>/<object>/...) and the output folder
+(output_dir/RUN NN/{LAYERS/<scene>/<object>/..., LAYOUTS/..., PREVIEWS/, PRORES/..., recorte_precomps.aep}); both are
+yours to choose (settings, or `cutthebullshit --work DIR --output DIR run ...`).
 For each source RAW folder, in order:
   1. prep        develop + denoise each RAW once -> half-res 16-bit sRGB <seq>_beauty PNG, the photo all the way to AE
-                 (tmp_read/RUN NN/<path below the mirror root>/; older runs have linear EXRs instead, still used as they are)
+                 (<work>/RUN NN/<path below the mirror root>/; older runs have linear EXRs instead, still used as they are)
   2. cleanplate  Photoshop: Select Subject + shadow/glow, Content-Aware Fill -> _plate (16-bit PNG) and _subject
   3. passes      8-bit sRGB PNGs next to the frames: _shadow (Multiply), _bounce (Screen); the plate is deleted after
   3b. layers     OpenCV: LAYERS/<shot> object / MULTIPLY_ / SCREEN_, LAYOUTS/<shot> LAYOUT_ (one RGBA for layout over
                  any background), PREVIEWS/PREVIEW_ jpg (the AE scene comp over --bg); then
-                 preview: PREVIEW_<seq>.mp4 of every stop-motion
+                 preview: PREVIEW_<seq>.mp4 of every stop-motion; prores: a ProRes 4444 movie of every stop-motion
   4. aecomps     After Effects, one precomp per sequence (CONTROL null + OBJECT = beauty through
-                 the Select Subject matte, SCREEN bounce light, MULTIPLY shadow) in tmp_write/RUN NN/recorte_precomps.aep,
+                 the Select Subject matte, SCREEN bounce light, MULTIPLY shadow) in <output>/RUN NN/recorte_precomps.aep,
                  a stop-motion as one precomp of image sequences at --fps, plus a 24 fps comp per scene over the bg
-  5. publish     copy LAYERS, LAYOUTS, PREVIEWS, PRORES (whatever the run has) to Dropbox 02. Runs/01 PUBLISH/RUN NN
-                 and save the project there linked to those copies, then close it and open a new empty project.
-                 The AE footage stays in tmp_read (Collect Files gathers it)
+The AE footage stays in the work folder; Collect Files on the project gathers everything to hand it over.
 Prints a time estimate per step at the start (from timings.json, updated after every run) and the remaining
 time after each step.
 
-Nothing already done is processed again. The target run (project, log, publish) is --run, else the newest run
+Nothing already done is processed again. The target run (project, log) is --run, else the newest run
 that already has every source, else the latest; each source is then worked on in the newest run that already has
 any of its frames (an older run included), else the target, and every step skips frames whose outputs are up to
 date. --new-run starts a new RUN and processes everything again there; --force redoes frames in the run used.
@@ -49,15 +48,15 @@ from . import frames as fr
 from . import prep
 from . import preview
 from . import progress
-from . import publish
-from .config import is_excluded, layers_dir, list_frames, load_json, mirror_dir, resolve_run, run_name, run_roots, runs, state_path, PUBLISH_ROOT
+from . import prores
+from .config import is_excluded, layers_dir, list_frames, load_json, mirror_dir, resolve_run, run_name, run_roots, runs, state_path, split_run, photo_folders
 
-STEPS = ("prep", "cleanplate", "passes", "layers", "preview", "aecomps", "publish")
+STEPS = ("prep", "cleanplate", "passes", "layers", "preview", "prores", "aecomps")
 DEFAULT_STEPS = STEPS
 ALIASES = {"beauty": "passes"}            # the step's name before 2026-10-16
 TIMINGS = state_path("timings.json")    # seconds per frame of every step, learned on this machine
 # seconds per frame (aecomps: per sequence) measured on this Mac; refined from timings.json after every run
-DEFAULT_SPF = {"prep": 4.5, "cleanplate": 13.0, "passes": 5.5, "layers": 2.0, "preview": 0.2, "aecomps": 8.0, "publish": 0.3}
+DEFAULT_SPF = {"prep": 4.5, "cleanplate": 13.0, "passes": 5.5, "layers": 2.0, "preview": 0.2, "prores": 0.3, "aecomps": 8.0}
 
 
 def fmt(sec):
@@ -88,8 +87,8 @@ def learn(step, seconds, units):
 
 
 def prepped(read_root, src):
-    """True if every frame of a source RAW folder is already developed in this run's tmp_read (PNG, or an EXR)."""
-    frames = [f for f in list_frames(src) if f.lower().endswith(".arw")]      # numbered the way prep numbers them
+    """True if every frame of a source RAW folder is already developed in this run's work folder (PNG, or an EXR)."""
+    frames = list_frames(src)                 # numbered the way prep numbers them
     if not frames:
         return False
     rd = mirror_dir(read_root, frames[0])
@@ -97,8 +96,8 @@ def prepped(read_root, src):
 
 
 def started(read_root, src):
-    """True if at least one frame of a source RAW folder is developed in this run's tmp_read."""
-    frames = [f for f in list_frames(src) if f.lower().endswith(".arw")]
+    """True if at least one frame of a source RAW folder is developed in this run's work folder."""
+    frames = list_frames(src)
     if not frames:
         return False
     rd = mirror_dir(read_root, frames[0])
@@ -118,7 +117,7 @@ def home_run(src, target, new_run=False):
 
 
 def pick_run(sources, run=None, new_run=False):
-    """(target run number, why): the run whose project / log / publish this is. Never a new run unless asked."""
+    """(target run number, why): the run whose folders / project / log this is. Never a new run unless asked."""
     if new_run:
         return resolve_run("new"), "new run (--new-run)"
     if run:
@@ -147,7 +146,7 @@ def main(argv=None):
     ap.add_argument("--fps", type=float, default=12, help="precomp / preview frame rate (default %(default)s)")
     ap.add_argument("--denoise", choices=("off", "raw", "strong"), default="raw", help="prep denoise (default %(default)s)")
     ap.add_argument("--look", choices=("camera", "linear"), default="camera",
-                    help="prep: camera = match the camera JPEG embedded in each .arw (default); linear = plain + adjustments")
+                    help="prep: camera = match the camera JPEG preview embedded in each RAW (default); linear = plain + adjustments")
     ap.add_argument("--exposure", type=float, default=None, help="prep: extra stops (linear look default 1.4)")
     ap.add_argument("--midtones", type=float, default=None, help="prep: midtone lift (linear look default %s)" % prep.MIDTONES)
     ap.add_argument("--contrast", type=float, default=None, help="prep: gentle S-curve (linear look default %s)" % prep.CONTRAST)
@@ -157,12 +156,6 @@ def main(argv=None):
     bad = [s for s in steps if s not in STEPS]
     if bad:
         ap.error("unknown step(s): %s" % ", ".join(bad))
-    if "publish" in steps and not PUBLISH_ROOT:
-        if args.steps == ",".join(DEFAULT_STEPS):
-            steps.remove("publish")                  # nowhere to publish to: the run stops after After Effects
-            print("   (no publish_root in the settings: not publishing)")
-        else:
-            ap.error("publish: set publish_root in the settings (see cutthebullshit.example.toml)")
 
     if args.run and args.new_run:
         ap.error("--run and --new-run don't go together")
@@ -173,22 +166,12 @@ def main(argv=None):
         except ValueError as e:
             ap.error(str(e))
 
-    # a scene / object folder expands to every RAW folder below it
+    # a scene / object folder expands to every photo folder below it (excluded folders skipped)
     sources = []
     for src in args.sources:
-        if list_frames(src):
-            sources.append(src)
-            continue
-        found = []
-        for d, dirs, files in os.walk(src):
-            skipped = [x for x in dirs if is_excluded(x)]
-            for x in skipped:
-                print("   skip %s (CUT OUT folder)" % os.path.join(d, x))
-            dirs[:] = [x for x in dirs if not is_excluded(x)]          # don't descend into CUT OUT folders
-            if os.path.basename(d) == "RAW" and any(f.lower().endswith(".arw") and not f.startswith("._") for f in files):
-                found.append(d)
-        found.sort()
-        print("   %s -> %d RAW folder(s)" % (src, len(found)))
+        found = photo_folders(src)
+        if found != [src]:
+            print("   %s -> %d photo folder(s)" % (src, len(found)))
         sources += found
 
     run_no, why = pick_run(sources, args.run, args.new_run)
@@ -220,14 +203,14 @@ def main(argv=None):
 
     # time estimate, from what each step will really process (frames already done in this run are skipped)
     spf = speeds()
-    units = {k: (n_seqs if k == "aecomps" else n_frames) for k in STEPS}
+    units = {k: (n_seqs if k in ("aecomps", "prores") else n_frames) for k in STEPS}
     pend = {k: todo.get(k, units[k]) for k in STEPS}
     est = {k: spf[k] * pend[k] for k in steps}
     t0 = time.time()
     print("   %d object folder(s), %d frame(s), %d sequence(s)" % (len(pairs), n_frames, n_seqs))
     print("   %-11s %14s %10s" % ("step", "to do", "estimate"))
     for k in steps:
-        unit = "seq" if k == "aecomps" else "fr"
+        unit = "seq" if k in ("aecomps", "prores") else "fr"
         print("   %-11s %14s %10s" % (k, ("%d/%d %s" % (pend[k], units[k], unit)) if k in todo else "%d %s" % (units[k], unit),
                                      fmt(est[k])))
     total = sum(est.values())
@@ -287,12 +270,20 @@ def main(argv=None):
                                 + (["--bg", args.bg] if args.bg is not None else []), "layers"))
     if "preview" in steps:
         step_done("preview", run("preview", preview.main, [wd for _, _, wd in pairs] + ["--fps", str(args.fps)], "preview"))
+    if "prores" in steps:
+        # per run (an object may be continued in an older run), only the objects of this invocation
+        by_run = {}
+        for _, _, wd in pairs:
+            rn, shot = split_run(wd)
+            by_run.setdefault(rn, []).append("/".join(shot))
+        secs = 0.0
+        for rn, shots in sorted(by_run.items()):
+            secs += run("prores %s" % rn, prores.main, ["--run", rn.split()[1]] + shots, "prores")
+        step_done("prores", secs)
     if "aecomps" in steps:
         step_done("aecomps", run("aecomps", aecomps.main, [rd for _, rd, _ in pairs] + ["--fps", str(args.fps), "--save",
                                  os.path.join(write_root, aecomps.PROJECT_NAME)]
                                  + (["--bg", args.bg] if args.bg is not None else []), "aecomps"))
-    if "publish" in steps:
-        step_done("publish", run("publish", publish.main, ["--run", str(run_no)], "publish"))
     print("\n== done in %s: %s" % (fmt(time.time() - t0), write_root))
     return 0
 

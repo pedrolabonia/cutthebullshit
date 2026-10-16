@@ -1,4 +1,4 @@
-"""The developed frames and clean plates in tmp_read, whatever format a run made them in.
+"""The developed frames and clean plates in the work folder, whatever format a run made them in.
 
 Runs from 2026-10-16 on: prep develops each RAW once, straight to the file After Effects uses:
     <seq>_beauty.####.png     16-bit sRGB, the photo (also the input of cleanplate and passes)
@@ -44,7 +44,7 @@ def subject_path(folder, seq, num):
 
 
 def frames(folder):
-    """[(seq, num as '0001')] of every developed frame in a tmp_read folder, sorted."""
+    """[(seq, num as '0001')] of every developed frame in a work folder, sorted."""
     found = set()
     for p in glob.glob(os.path.join(folder, "*.exr")) + glob.glob(os.path.join(folder, "*_beauty.*.png")):
         name = os.path.basename(p)

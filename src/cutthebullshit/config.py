@@ -1,7 +1,8 @@
 """Settings, shared paths and naming.
 
-Settings come from a TOML file, the first one found of: $CUTTHEBULLSHIT_CONFIG, ./cutthebullshit.toml,
-~/.cutthebullshit/config.toml (see cutthebullshit.example.toml). Without one, everything works in ~/cutthebullshit-work.
+Settings come from a TOML file, the first one found of: $CUTTHEBULLSHIT_CONFIG (`cutthebullshit --config FILE`),
+./cutthebullshit.toml, ~/.cutthebullshit/config.toml (see cutthebullshit.example.toml). Without one, the work and output
+folders are ~/cutthebullshit/work and ~/cutthebullshit/output.
 """
 
 import os
@@ -12,7 +13,10 @@ STATE_DIR = os.path.expanduser(os.environ.get("CUTTHEBULLSHIT_HOME", "~/.cuttheb
 
 
 def _settings():
-    for p in (os.environ.get("CUTTHEBULLSHIT_CONFIG"), os.path.join(os.getcwd(), "cutthebullshit.toml"),
+    named = os.environ.get("CUTTHEBULLSHIT_CONFIG")
+    if named and not os.path.isfile(os.path.expanduser(named)):
+        raise SystemExit("settings file not found: %s" % named)
+    for p in (named, os.path.join(os.getcwd(), "cutthebullshit.toml"),
               os.path.join(STATE_DIR, "config.toml")):
         if p and os.path.isfile(os.path.expanduser(p)):
             with open(os.path.expanduser(p), "rb") as fh:
@@ -101,7 +105,7 @@ def bg_key(spec):
     kind, val = parse_bg(spec)
     if kind == "image":
         return "image %s %d" % (val, int(os.path.getmtime(val)))
-    return "%s %s" % (kind, ",".join("%.4f" % v for v in val) if val else "")
+    return "%s %s" % (kind, ",".join("%.4f" % v for v in val)) if val else kind
 
 APPS_GB = 6.0   # RAM left for After Effects, Photoshop and macOS while frames are worked on
 
@@ -113,9 +117,38 @@ def default_workers(gb_per_worker):
     cores = os.cpu_count() or 2
     try:
         ram = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1e9
-    except (ValueError, OSError):
+    except (ValueError, OSError, AttributeError):   # no sysconf (Windows)
         ram = 16.0
     return max(1, min(cores - 2, int((ram - APPS_GB) / gb_per_worker)))
+
+
+def find_app(setting, family):
+    """The Adobe app to drive: `setting` in the settings ("Adobe After Effects 2025"), else the newest installed
+    "<family> <year>" in /Applications. None when there is none."""
+    if SETTINGS.get(setting):
+        return SETTINGS[setting]
+    found = []
+    for d in ("/Applications", os.path.expanduser("~/Applications")):
+        try:
+            names = os.listdir(d)
+        except OSError:
+            continue
+        for n in names:
+            m = re.match(r"^%s (\d{4})(\.app)?$" % re.escape(family), n)
+            app = n[:-4] if n.endswith(".app") else n
+            if m and (os.path.isdir(os.path.join(d, n, app + ".app")) or n.endswith(".app")):
+                found.append((int(m.group(1)), app))
+    return max(found)[1] if found else None
+
+
+AFTER_EFFECTS = find_app("after_effects_app", "Adobe After Effects")
+PHOTOSHOP = find_app("photoshop_app", "Adobe Photoshop")
+
+
+def need_app(name, what):
+    if not name:
+        raise SystemExit("%s not found in /Applications; set %s_app in the settings" % (what, what.lower().replace(" ", "_")))
+    return name
 
 
 def one_thread():
@@ -130,12 +163,69 @@ def one_thread():
         pass
 
 
-TMP_READ = setting_path("tmp_read", "~/cutthebullshit-work/tmp_read")      # developed frames, masks, passes: RUN NN/<shot>
-TMP_WRITE = setting_path("tmp_write", "~/cutthebullshit-work/tmp_write")   # RUN NN/{LAYERS, LAYOUTS, PREVIEWS}, AE project
-PUBLISH_ROOT = setting_path("publish_root")    # where `publish` copies a run (RUN NN inside); none: publish is off
+def _folder(env, keys, default):
+    """A folder from the environment (set by `cutthebullshit --work / --output`), else the settings, else the default."""
+    if os.environ.get(env):
+        return os.path.abspath(os.path.expanduser(os.environ[env]))
+    for k in keys:
+        if SETTINGS.get(k):
+            return os.path.abspath(os.path.expanduser(SETTINGS[k]))
+    return os.path.expanduser(default)
+
+
+# the two folders you point the tool at; each gets one "RUN NN" folder per run
+#   work:   developed frames, subject masks, shadow / bounce passes (also the After Effects footage)
+#   output: LAYERS, LAYOUTS, PREVIEWS, PRORES and the After Effects project
+WORK_DIR = _folder("CUTTHEBULLSHIT_WORK_DIR", ("work_dir", "tmp_read"), "~/cutthebullshit/work")
+OUTPUT_DIR = _folder("CUTTHEBULLSHIT_OUTPUT_DIR", ("output_dir", "tmp_write"), "~/cutthebullshit/output")
 SOURCE_ROOT = setting_path("source_root")      # the organized photo tree `status` checks by default
 MIRROR_DEPTH = 3
-FRAME_EXT = (".arw", ".exr")
+
+# ---- how the photo tree is organized (all overridable in the settings) ----
+RAW_EXT = (".arw", ".srf", ".sr2", ".cr2", ".cr3", ".crw", ".nef", ".nrw", ".dng", ".raf", ".orf", ".rw2", ".rwl", ".pef",
+           ".srw", ".x3f", ".3fr", ".fff", ".iiq", ".erf", ".mos", ".mef", ".mrw", ".kdc", ".dcr", ".k25", ".raw")
+IMAGE_EXT = (".tif", ".tiff", ".jpg", ".jpeg", ".png")       # already developed photos: used as they are (no RAW step)
+PHOTO_EXT = tuple(e.lower() if e.startswith(".") else "." + e.lower()
+                  for e in SETTINGS.get("photo_extensions", RAW_EXT + IMAGE_EXT))
+PHOTO_FOLDER = SETTINGS.get("photo_folder", "RAW")   # the folders that hold an object's photos ("" = any folder with photos)
+EXCLUDE_DIRS = tuple(x.strip().lower() for x in SETTINGS.get("exclude_folders", ["cut out"]))   # never processed, any case
+STOP_MOTION_SUFFIXES = tuple(SETTINGS.get("stop_motion_suffixes", ["-anim", "_anim"]))  # a folder ending in one = stop-motion
+# file name -> sequence: <base> is the sequence (a take, e.g. teapot-anim_v1), <num> the frame; default fits names like
+# S01_teapot-anim_v1_0003_<anything>. A name that doesn't match is its own still / the stop-motion's folder name is used.
+SEQUENCE_PATTERN = SETTINGS.get("sequence_pattern", r"^(?P<base>.+?_v\d+)_(?P<num>\d+)_")
+CROP = SETTINGS.get("crop")                      # [width, height] at full sensor size, centre crop (e.g. [9504, 6336])
+HALF_SIZE = bool(SETTINGS.get("half_size", True))   # develop RAWs at half size (2x2 pixels merged: 4x faster, less noise)
+
+
+def is_photo(name):
+    base = os.path.basename(name)
+    return not base.startswith("._") and base.lower().endswith(PHOTO_EXT)
+
+
+def is_raw(name):
+    return name.lower().endswith(RAW_EXT)
+
+
+def is_photo_folder(folder, files=None):
+    """A folder with an object's photos: named PHOTO_FOLDER (if set), not excluded, with at least one photo in it."""
+    if PHOTO_FOLDER and os.path.basename(os.path.normpath(folder)) != PHOTO_FOLDER:
+        return False
+    if is_excluded(folder):
+        return False
+    files = os.listdir(folder) if files is None else files
+    return any(is_photo(f) for f in files)
+
+
+def photo_folders(src):
+    """src itself if it holds photos, else every photo folder below it (excluded folders skipped, sorted)."""
+    if os.path.isdir(src) and any(is_photo(f) for f in os.listdir(src)) and not is_excluded(src):
+        return [src]
+    found = []
+    for d, dirs, files in os.walk(src):
+        dirs[:] = sorted(x for x in dirs if not is_excluded(x) and not x.startswith("."))
+        if is_photo_folder(d, files):
+            found.append(d)
+    return sorted(found)
 
 
 def frame_name(path):
@@ -148,36 +238,31 @@ MIRROR_ROOT = SETTINGS.get("mirror_root", "")
 
 
 def mirror_parts(path, depth=MIRROR_DEPTH):
-    """Parent folders of a file below the mirror root (e.g. S01 Kitchen/spoon/v3/RAW); else the last `depth`."""
+    """Parent folders of a file below the mirror root (e.g. S01 Kitchen/spoon/v3/RAW); else the last `depth`
+    (scene/object/RAW), or the last depth - 1 when the photos aren't in a photo_folder (scene/object)."""
     parts = os.path.normpath(os.path.dirname(path)).split(os.sep)
     if MIRROR_ROOT and MIRROR_ROOT in parts:
         return parts[len(parts) - parts[::-1].index(MIRROR_ROOT):]
-    return parts[-depth:]
+    return parts[-depth:] if PHOTO_FOLDER and parts[-1] == PHOTO_FOLDER else parts[-(depth - 1):]
 
 
 def mirror_dir(root, path, depth=MIRROR_DEPTH):
     return os.path.join(root, *mirror_parts(path, depth))
 
 
-EXCLUDE_DIRS = ("cut out",)      # never process anything inside these folders (finished cut-outs), any case
-
-
 def is_excluded(path):
-    """True if any folder in the path is named CUT OUT (case and surrounding spaces ignored)."""
+    """True if any folder in the path is an excluded one (default CUT OUT; case and surrounding spaces ignored)."""
     return any(p.strip().lower() in EXCLUDE_DIRS for p in os.path.normpath(path).split(os.sep))
 
 
 def list_frames(folder):
-    """Frames in a source folder, sorted; skips AppleDouble (._) files and anything inside a CUT OUT folder."""
+    """The photos in a source folder, sorted; skips AppleDouble (._) files and anything inside an excluded folder."""
     if is_excluded(folder):
-        print("  skip %s (inside a CUT OUT folder)" % folder)
+        print("  skip %s (inside an excluded folder)" % folder)
         return []
-    out = []
-    for f in sorted(os.listdir(folder)):
-        if f.startswith("._") or not f.lower().endswith(FRAME_EXT):
-            continue
-        out.append(os.path.join(folder, f))
-    return out
+    if not os.path.isdir(folder):
+        return []
+    return [os.path.join(folder, f) for f in sorted(os.listdir(folder)) if is_photo(f)]
 
 
 RUN_RX = re.compile(r"^RUN (\d+)$")
@@ -188,9 +273,9 @@ def run_name(n):
 
 
 def runs():
-    """Run numbers that exist in tmp_read or tmp_write."""
+    """Run numbers that exist in the work folder or the output folder."""
     out = set()
-    for root in (TMP_READ, TMP_WRITE):
+    for root in (WORK_DIR, OUTPUT_DIR):
         if os.path.isdir(root):
             out |= {int(m.group(1)) for m in (RUN_RX.match(d) for d in os.listdir(root)) if m}
     return sorted(out)
@@ -201,12 +286,12 @@ def resolve_run(run="latest"):
     existing = runs()
     if run == "new":
         n = (existing[-1] + 1) if existing else 1
-        for root in (TMP_READ, TMP_WRITE):
+        for root in (WORK_DIR, OUTPUT_DIR):
             os.makedirs(os.path.join(root, run_name(n)), exist_ok=True)
         return n
     if run == "latest":
         if not existing:
-            raise SystemExit("no RUN folders yet in %s - run the full workflow first" % TMP_WRITE)
+            raise SystemExit("no RUN folders yet in %s - run the full workflow first" % OUTPUT_DIR)
         return existing[-1]
     n = int(run)
     if n not in existing:
@@ -215,24 +300,24 @@ def resolve_run(run="latest"):
 
 
 def run_roots(n):
-    """(tmp_read/RUN NN, tmp_write/RUN NN)"""
-    return os.path.join(TMP_READ, run_name(n)), os.path.join(TMP_WRITE, run_name(n))
+    """(<work>/RUN NN, <output>/RUN NN)"""
+    return os.path.join(WORK_DIR, run_name(n)), os.path.join(OUTPUT_DIR, run_name(n))
 
 
-LAYERS, LAYOUTS, PREVIEWS = "LAYERS", "LAYOUTS", "PREVIEWS"   # tmp_write/RUN NN/<these>
+LAYERS, LAYOUTS, PREVIEWS = "LAYERS", "LAYOUTS", "PREVIEWS"   # <output>/RUN NN/<these>
 
 
 def split_run(folder):
-    """(run folder name, shot parts) for any tmp_read / tmp_write folder of a run.
+    """(run folder name, shot parts) for any work / output folder of a run.
 
-    Shot parts are the object path below the mirror root without RUN, LAYERS/... and the trailing RAW,
+    Shot parts are the object path below the mirror root without RUN, LAYERS/... and the trailing photo folder,
     e.g. ['S02 Garden', 'watering-can'] or ['S01 Kitchen', 'spoon', 'v3']."""
     parts = os.path.normpath(os.path.abspath(folder)).split(os.sep)
     i = max(j for j, p in enumerate(parts) if RUN_RX.match(p))
     run, rest = parts[i], parts[i + 1:]
     if rest and rest[0] in (LAYERS, LAYOUTS, PREVIEWS):
         rest = rest[1:]
-    if rest and rest[-1] == "RAW":
+    if rest and PHOTO_FOLDER and rest[-1] == PHOTO_FOLDER:
         rest = rest[:-1]
     return run, rest
 
@@ -243,31 +328,31 @@ def shot_key(folder, root=None):
 
 
 def run_write_root(folder):
-    return os.path.join(TMP_WRITE, split_run(folder)[0])
+    return os.path.join(OUTPUT_DIR, split_run(folder)[0])
 
 
 def layers_dir(folder):
-    """tmp_write/RUN NN/LAYERS/<scene>/<object>/...: object, MULTIPLY_, SCREEN_ of one object."""
+    """<output>/RUN NN/LAYERS/<scene>/<object>/...: object, MULTIPLY_, SCREEN_ of one object."""
     run, shot = split_run(folder)
-    return os.path.join(TMP_WRITE, run, LAYERS, *shot)
+    return os.path.join(OUTPUT_DIR, run, LAYERS, *shot)
 
 
 def layouts_dir(folder):
-    """tmp_write/RUN NN/LAYOUTS/<scene>/<object>/...: the LAYOUT_ pngs of one object."""
+    """<output>/RUN NN/LAYOUTS/<scene>/<object>/...: the LAYOUT_ pngs of one object."""
     run, shot = split_run(folder)
-    return os.path.join(TMP_WRITE, run, LAYOUTS, *shot)
+    return os.path.join(OUTPUT_DIR, run, LAYOUTS, *shot)
 
 
 def previews_dir(folder):
-    """tmp_write/RUN NN/PREVIEWS: every PREVIEW_ jpg and mp4 of the run, flat."""
+    """<output>/RUN NN/PREVIEWS: every PREVIEW_ jpg and mp4 of the run, flat."""
     return os.path.join(run_write_root(folder), PREVIEWS)
 
 
 def read_dir(folder):
-    """tmp_read folder of an object (keeps the source structure, with RAW)."""
+    """work folder of an object (keeps the source structure, with its photo folder)."""
     run, shot = split_run(folder)
-    d = os.path.join(TMP_READ, run, *shot)
-    return os.path.join(d, "RAW") if os.path.isdir(os.path.join(d, "RAW")) else d
+    d = os.path.join(WORK_DIR, run, *shot)
+    return os.path.join(d, PHOTO_FOLDER) if PHOTO_FOLDER and os.path.isdir(os.path.join(d, PHOTO_FOLDER)) else d
 
 
 def load_json(path):
@@ -279,5 +364,5 @@ def load_json(path):
 
 
 def short_name(raw_folder):
-    """A RAW folder as it is named in the runs, e.g. 'S01 Kitchen/teapot-anim/RAW' (for logs)."""
+    """A photo folder as it is named in the runs, e.g. 'S01 Kitchen/teapot-anim/RAW' (for logs)."""
     return "/".join(mirror_parts(os.path.join(raw_folder, "_")))

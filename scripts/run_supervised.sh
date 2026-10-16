@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Unattended run: keeps `cutthebullshit supervise` going until it finishes (it resumes from tmp_write/RUN NN/_supervise.json).
+# Unattended run: keeps `cutthebullshit supervise` going until it finishes (it resumes from <output>/RUN NN/_supervise.json).
 #   nohup caffeinate -dims scripts/run_supervised.sh <run number> <folders...> > <log> 2>&1 &
 # Uses the Python that has cutthebullshit installed: $PYTHON, else python3 on the PATH.
 py=${PYTHON:-python3}

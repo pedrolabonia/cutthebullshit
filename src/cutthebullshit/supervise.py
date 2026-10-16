@@ -1,7 +1,7 @@
 """Unattended run: the whole workflow over many folders, with a watchdog, app restarts and retries.
 
-Runs cutthebullshit run one RAW folder at a time (prep, cleanplate, passes, layers, preview) in one RUN, then aecomps +
-publish over everything that got through. Made to be left alone:
+Runs cutthebullshit run one RAW folder at a time (prep, cleanplate, passes, layers, preview, prores) in one RUN, then
+After Effects over everything that got through. Made to be left alone:
   - hang:   no output for HANG_MIN minutes, or Photoshop not answering twice on a frame -> the job is killed, the app
             of the step it was in is restarted, and the folder is retried
   - crash:  before every attempt Photoshop must answer (After Effects before the AE steps); an app that doesn't is
@@ -9,18 +9,18 @@ publish over everything that got through. Made to be left alone:
   - errors: every step resumes, so a retry continues where the last attempt stopped; after ATTEMPTS failed tries
             the folder builds what has clean plates (passes, layers, preview) and is marked partial / failed, and
             the run moves on
-  - itself: progress is kept in tmp_write/RUN NN/_supervise.json - run it again with the same --run to resume
+  - itself: progress is kept in <output>/RUN NN/_supervise.json - run it again with the same --run to resume
             (the launcher loops on it until it finishes).
   - nothing twice: the run is picked like cutthebullshit run does (the newest that already has every source), each folder
             is continued in the run that already has its frames, every step skips what is on disk, and After
-            Effects and publish run once each at the end (a failed publish is retried without rebuilding the precomps)
+            Effects runs once at the end
   - ETA:    counted from what is really left on disk per step (frames already done don't count), priced with the
             speeds learned in timings.json and corrected by how long this session's folders really took; every
             folder start and every 5 min a line "this folder ~X | whole run ~Y, finish ~Z", also in
-            tmp_write/RUN NN/_supervise_eta.json
-Summary of failed / partial folders: tmp_write/RUN NN/_supervise_summary.txt (and the end of the log).
+            <output>/RUN NN/_supervise_eta.json
+Summary of failed / partial folders: <output>/RUN NN/_supervise_summary.txt (and the end of the log).
 
-    cutthebullshit supervise <scene / object / RAW folders> [--run NN] [--no-publish]
+    cutthebullshit supervise <scene / object / RAW folders> [--run NN] [--no-ae]
     cutthebullshit supervise --selftest      # restart Photoshop and After Effects once
 """
 
@@ -39,7 +39,7 @@ from . import prep
 from . import pipeline
 from .aecomps import AE_APP, RESULT
 from .cleanplate import PS_APP
-from .config import TMP_WRITE, is_excluded, list_frames, load_json, resolve_run, run_name, run_roots, state_path as tool_file, short_name
+from .config import need_app, OUTPUT_DIR, is_excluded, list_frames, load_json, resolve_run, run_name, run_roots, state_path as tool_file, short_name, photo_folders
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PY = sys.executable
@@ -48,9 +48,8 @@ ETA_EVERY = 300                  # s between the combined folder / whole-run ETA
 FOLDER_OVERHEAD = 20             # s per folder job besides frame work (recorte start, app checks)
 HANG_MIN = 25                    # longest legit silence: one Photoshop attempt (cleanplate gives up after 16 min)
 ATTEMPTS = 3
-PS_NAME = "Adobe Photoshop 2026"
-DROPBOX_MARGIN = 3e9             # keep this much free on the Dropbox disk after publishing
-STEP_APP = {"cleanplate": "photoshop", "aecomps": "ae", "publish": "ae"}
+PS_NAME = PS_APP
+STEP_APP = {"cleanplate": "photoshop", "aecomps": "ae"}
 
 
 def log(msg):
@@ -76,7 +75,7 @@ def osa(lines, timeout):
 
 
 def ps_ok():
-    rc, out = osa(["with timeout of 60 seconds", 'tell application id "%s" to do javascript "\'ps-ok\'"' % PS_APP,
+    rc, out = osa(["with timeout of 60 seconds", 'tell application "%s" to do javascript "\'ps-ok\'"' % PS_APP,
                    "end timeout"], 90)
     return rc == 0 and "ps-ok" in out
 
@@ -148,7 +147,7 @@ def restart(app):
         subprocess.run(["open", "-a", PS_NAME])
         ok = wait_until(ps_ok, 10, app)
         if ok:                         # recovered documents from a crash: close them
-            osa(["with timeout of 120 seconds", 'tell application id "%s" to do javascript '
+            osa(["with timeout of 120 seconds", 'tell application "%s" to do javascript '
                  '"while (app.documents.length) app.activeDocument.close(SaveOptions.DONOTSAVECHANGES); \'done\'"' % PS_APP,
                  "end timeout"], 150)
     else:
@@ -257,38 +256,15 @@ def run_job(args, label, after=None, eta_file=None, where=""):
 
 
 def expand(sources):
+    """Every photo folder below the sources (a source with photos in it is one itself), once each, sorted."""
     found = []
     for src in sources:
-        if list_frames(src):
-            found.append(src)
-            continue
-        for d, dirs, files in os.walk(src):
-            dirs[:] = sorted(x for x in dirs if not is_excluded(x))
-            if os.path.basename(d) == "RAW" and any(f.lower().endswith(".arw") and not f.startswith("._") for f in files):
-                found.append(d)
+        found += photo_folders(src)
     return sorted(dict.fromkeys(found))
 
 
-def free_bytes(path):
-    return shutil.disk_usage(path).free
-
-
-def copy_bytes(src_root, dst_root):
-    """Bytes publish still has to copy from src_root to dst_root (files missing or out of date there)."""
-    from .publish import up_to_date
-    n = 0
-    for d, _, fs in os.walk(src_root):
-        for f in fs:
-            if f.startswith("._") or f == ".DS_Store":
-                continue
-            src = os.path.join(d, f)
-            if not up_to_date(src, os.path.join(dst_root, os.path.relpath(src, src_root))):
-                n += os.path.getsize(src)
-    return n
-
-
 # per folder: everything up to the After Effects inputs; "salvage" = what still works on the frames that got a clean plate
-FOLDER_STEPS, SALVAGE_STEPS = "prep,cleanplate,passes,layers,preview", "passes,layers,preview"
+FOLDER_STEPS, SALVAGE_STEPS = "prep,cleanplate,passes,layers,preview,prores", "passes,layers,preview,prores"
 FOLDER_APPS, SALVAGE_APPS = ["photoshop"], []
 
 
@@ -298,18 +274,20 @@ def main(argv=None):
     ap.add_argument("--run", help="target run number (default: like cutthebullshit run, the newest run that already has every "
                                   "source, else the latest; a restart finds the same one)")
     ap.add_argument("--bg", default=None, help="background of the PREVIEW renders and AE scene comps (see cutthebullshit run --bg)")
-    ap.add_argument("--no-ae", action="store_true", help="stop after the per-folder steps (no After Effects, no publish)")
-    ap.add_argument("--no-publish", action="store_true", help="build the After Effects project but don't publish to Dropbox")
-    ap.add_argument("--state", default=None, help="progress file (default tmp_write/RUN NN/_supervise.json; another one "
+    ap.add_argument("--no-ae", action="store_true", help="stop after the per-folder steps (no After Effects)")
+    ap.add_argument("--state", default=None, help="progress file (default <output>/RUN NN/_supervise.json; another one "
                                                   "= an independent job in the same run)")
     ap.add_argument("--new-run", action="store_true", help="start a new RUN and process everything again in it "
                                                             "(restarts then need --run with its number)")
     ap.add_argument("--selftest", action="store_true", help="restart Photoshop and After Effects once and check them")
     args = ap.parse_args(argv)
+    need_app(PS_APP, "Photoshop")
+    if not args.no_ae:
+        need_app(AE_APP, "After Effects")
 
     if not ui_access():
         log("WARNING: no Accessibility permission - dialogs that block Photoshop / After Effects after a crash "
-            "can't be closed automatically (System Settings > Privacy & Security > Accessibility > Claude)")
+            "can't be closed automatically (System Settings > Privacy & Security > Accessibility > the app you run this from)")
     if args.selftest:
         res = {app: restart(app) for app in ("photoshop", "ae")}
         log("selftest: %s" % res)
@@ -359,7 +337,6 @@ def main(argv=None):
     def final_est():
         fin = state.get("final", {})
         t = 0.0 if fin.get("aecomps") == "done" or args.no_ae else n_seq * spf["aecomps"] + 60
-        t += 0.0 if fin.get("publish") in ("done", "skipped") or args.no_ae or args.no_publish else total * spf["publish"] + 60
         return t
 
     # session correction: how much longer folders really took than estimated (retries, restarts, slow frames)
@@ -441,15 +418,14 @@ def main(argv=None):
         state["second_pass"] = True
         save()
 
-    # ---- After Effects, then publish, over every folder that got through: each once (a failed publish is
-    # retried on its own, without building the precomps again)
+    # ---- After Effects over every folder that got through, once
     ok_folders = [f for f in folders if state["folders"][f]["status"] in ("done", "partial")]
     fin = state["final"]
 
     def final_step(name, args_, label):
         for attempt in range(1, ATTEMPTS + 1):
             ensure(["ae"])
-            after = final_est() - (n_seq * spf["aecomps"] + 60 if name == "aecomps" else total * spf["publish"] + 60)
+            after = final_est() - (n_seq * spf["aecomps"] + 60)
             res, step = run_job(args_, "%s attempt %d" % (label, attempt), after=max(0.0, after), eta_file=eta_file,
                                 where=name)
             if res == "ok":
@@ -464,26 +440,9 @@ def main(argv=None):
         return False
 
     if args.no_ae:
-        log("--no-ae: After Effects and publish not run")
+        log("--no-ae: After Effects not run")
     elif ok_folders and fin.get("aecomps") != "done":
         final_step("aecomps", PIPELINE + ok_folders + run_args + ["--steps", "aecomps"], "After Effects precomps")
-    from .config import PUBLISH_ROOT
-    if args.no_publish and not args.no_ae:
-        log("--no-publish: not published")
-    elif not PUBLISH_ROOT and not args.no_ae:
-        log("no publish_root in the settings: not published")
-    elif ok_folders and not args.no_ae and fin.get("aecomps") == "done" and fin.get("publish") not in ("done", "skipped"):
-        from .publish import PUBLISH_ROOT
-        need = sum(copy_bytes(os.path.join(write_root, x), os.path.join(PUBLISH_ROOT, run_name(run_no), x))
-                   for x in ("LAYERS", "LAYOUTS", "PREVIEWS", "PRORES") if os.path.isdir(os.path.join(write_root, x)))
-        if free_bytes(os.path.expanduser("~/Dropbox")) < need + DROPBOX_MARGIN:
-            fin["publish"] = "skipped"
-            fin["publish_note"] = "NOT published: Dropbox disk has %.1f GB free, publish needs %.1f GB + %.0f GB margin" % (
-                free_bytes(os.path.expanduser("~/Dropbox")) / 1e9, need / 1e9, DROPBOX_MARGIN / 1e9)
-            log(fin["publish_note"])
-            save()
-        else:
-            final_step("publish", PIPELINE + ok_folders + run_args + ["--steps", "publish"], "publish")
 
     # ---- summary
     st = state["folders"]
@@ -492,10 +451,8 @@ def main(argv=None):
              "folders: %d done, %d partial, %d failed (of %d)" % (
                  sum(st[f]["status"] == "done" for f in folders), sum(st[f]["status"] == "partial" for f in folders),
                  sum(st[f]["status"] == "failed" for f in folders), len(folders)),
-             "after effects: %s   publish: %s" % (fin.get("aecomps"), fin.get("publish")),
+             "after effects: %s" % fin.get("aecomps"),
              "AE project: %s" % os.path.join(write_root, "recorte_precomps.aep")]
-    if fin.get("publish_note"):
-        lines.append(fin["publish_note"])
     for f, r in bad:
         lines.append("  %-8s %s\n           %s" % (r["status"].upper(), f, "; ".join(r["notes"])))
     for n in fin.get("notes", []):

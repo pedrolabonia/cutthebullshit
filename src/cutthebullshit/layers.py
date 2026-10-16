@@ -1,7 +1,7 @@
 """Layers step: the per-object deliverables, made with OpenCV from the frames passes.py finished.
 
-For every frame with its <seq>_beauty, _subject, _shadow and _bounce in tmp_read it writes (cutthebullshit prores,
-preview.py and publish.py read these):
+For every frame with its <seq>_beauty, _subject, _shadow and _bounce in the work folder it writes (the preview and
+prores steps read these):
     LAYERS/<shot>/<seq>.####.png            the object: beauty with the Select Subject mask as straight alpha
     LAYERS/<shot>/MULTIPLY_<seq>.####.png   shadow (Multiply)
     LAYERS/<shot>/SCREEN_<seq>.####.png     bounce light (Screen)
@@ -13,7 +13,7 @@ preview.py and publish.py read these):
 Changing --bg re-renders an object's previews (its LAYERS folder keeps the background used in _preview_bg.txt).
 Resumable: frames whose five outputs are newer than their inputs are skipped; --force redoes them.
 
-    cutthebullshit layers "<tmp_read>/RUN 01/S01 Kitchen/teapot-anim/RAW"
+    cutthebullshit layers "<work>/RUN 01/S01 Kitchen/teapot-anim/RAW"
 """
 
 import argparse
@@ -162,7 +162,7 @@ def _safe(job):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("folders", nargs="+", help="tmp_read folders whose frames have their passes")
+    ap.add_argument("folders", nargs="+", help="work folders whose frames have their passes")
     ap.add_argument("--shadow-opacity", type=float, default=SHADOW_OPACITY,
                     help="shadow strength in LAYOUT_ and PREVIEW_, as in After Effects (default %(default)s)")
     ap.add_argument("--layout-grey", type=float, default=LAYOUT_GREY,

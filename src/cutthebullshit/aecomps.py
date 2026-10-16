@@ -1,6 +1,6 @@
 """After Effects step: build one precomp per sequence (object, shadow and bounce light as blend layers).
 
-For every sequence in the given tmp_read folders (tmp_read/RUN NN/<scene>/<object>/.../RAW) with, per frame,
+For every sequence in the given work folders (<work>/RUN NN/<scene>/<object>/.../RAW) with, per frame,
     <seq>_beauty.####.png     the photo, 16-bit sRGB (prep.py; 8-bit from the EXR in older runs)
     <seq>_subject.####.png    Photoshop Select Subject mask, white = object (cleanplate.py)
     <seq>_shadow.####.png     shadow        -> Multiply (passes.py)
@@ -32,7 +32,7 @@ Photoshop: the script sets the project to 16 bpc, sRGB working space, no lineari
 no "Blend Colors Using 1.0 Gamma" (--keep-color-settings to leave it alone). A master project in linear
 blending will make the shadows and bounce light look different.
 
-    cutthebullshit aecomps "<tmp_read>/RUN 01/S01 Kitchen/teapot-anim/v1/RAW" [--fps 12]
+    cutthebullshit aecomps "<work>/RUN 01/S01 Kitchen/teapot-anim/v1/RAW" [--fps 12]
 """
 
 import argparse
@@ -46,14 +46,14 @@ import time
 
 from . import frames
 from . import progress
-from .config import BG, SHADOW_OPACITY, TMP_WRITE, parse_bg, state_path, read_dir, shot_key, split_run
+from .config import AFTER_EFFECTS, need_app, BG, SHADOW_OPACITY, OUTPUT_DIR, parse_bg, state_path, read_dir, shot_key, split_run
 
-AE_APP = "Adobe After Effects 2026"
+AE_APP = AFTER_EFFECTS   # the newest installed After Effects, or after_effects_app in the settings
 RESULT = state_path("ae_result.json")     # After Effects writes each job's result here
 SEQ_RX = re.compile(r"^(?P<seq>.+)\.(?P<num>\d{4})\.exr$")
-INPUTS = ("beauty", "subject", "shadow", "bounce")     # <seq>_<input>.####.png next to the frames in tmp_read
+INPUTS = ("beauty", "subject", "shadow", "bounce")     # <seq>_<input>.####.png next to the frames in the work folder
 DEFAULT_BG = BG
-PROJECT_NAME = "recorte_precomps.aep"    # one After Effects project per run: tmp_write/RUN NN/recorte_precomps.aep
+PROJECT_NAME = "recorte_precomps.aep"    # one After Effects project per run: <output>/RUN NN/recorte_precomps.aep
 
 JSX = r"""
 (function () {
@@ -301,7 +301,7 @@ JSX = r"""
 
 
 def find_sequences(folder):
-    """Sequences in a tmp_read folder whose every frame has its beauty, subject, shadow and bounce PNG."""
+    """Sequences in a work folder whose every frame has its beauty, subject, shadow and bounce PNG."""
     seqs = {}
     for seq, num in frames.frames(folder):
         seqs.setdefault(seq, []).append(int(num))
@@ -330,7 +330,7 @@ def run_jsx(job, work_dir, template=JSX, name="_aecomps.jsx"):
     # many precomps take minutes: AppleScript's default 2 min timeout would give up while AE keeps working
     try:
         subprocess.run(["osascript", "-e", "with timeout of 3600 seconds", "-e",
-                        'tell application "%s" to DoScriptFile "%s"' % (AE_APP, jsx), "-e", "end timeout"],
+                        'tell application "%s" to DoScriptFile "%s"' % (need_app(AE_APP, "After Effects"), jsx), "-e", "end timeout"],
                        capture_output=True, text=True, timeout=3660)
     except subprocess.TimeoutExpired:
         pass
@@ -349,8 +349,8 @@ def run_jsx(job, work_dir, template=JSX, name="_aecomps.jsx"):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("folders", nargs="+", help="tmp_read folders (tmp_read/RUN NN/<scene>/<object>/.../RAW); "
-                                               "an object's tmp_write/RUN NN/LAYERS folder works too")
+    ap.add_argument("folders", nargs="+", help="work folders (<work>/RUN NN/<scene>/<object>/.../RAW); "
+                                               "an object's <output>/RUN NN/LAYERS folder works too")
     ap.add_argument("--fps", type=float, default=12, help="frame rate of the precomps (default %(default)s: one photo per frame)")
     ap.add_argument("--batch", type=int, default=40, help="sequences per After Effects call (default %(default)s)")
     ap.add_argument("--keep", action="store_true", help="don't replace precomps/footage that already exist")
@@ -364,12 +364,12 @@ def main(argv=None):
     ap.add_argument("--keep-color-settings", action="store_true",
                     help="don't switch the project to display-space blending (16 bpc, sRGB, no linearize, no 1.0 gamma)")
     ap.add_argument("--save", default=None,
-                    help="After Effects project to add the precomps to (default: tmp_write/RUN NN/%s of the folders' run)" % PROJECT_NAME)
+                    help="After Effects project to add the precomps to (default: <output>/RUN NN/%s of the folders' run)" % PROJECT_NAME)
     args = ap.parse_args(argv)
     seqs = []
-    # an object's tmp_write/RUN NN/LAYERS/... folder stands for its tmp_read folder
+    # an object's <output>/RUN NN/LAYERS/... folder stands for its work folder
     args.folders = [read_dir(f) if os.sep + "LAYERS" + os.sep in os.path.abspath(f) + os.sep and
-                    os.path.abspath(f).startswith(TMP_WRITE + os.sep) else f for f in args.folders]
+                    os.path.abspath(f).startswith(OUTPUT_DIR + os.sep) else f for f in args.folders]
     for f in args.folders:
         found = find_sequences(f)
         print("%s: %s" % (f, ", ".join("%s (%d frames)" % (s["name"], s["frames"]) for s in found) or "nothing"))
@@ -378,7 +378,7 @@ def main(argv=None):
         return 1
     os.makedirs(os.path.dirname(RESULT), exist_ok=True)
     if not args.save:
-        args.save = os.path.join(TMP_WRITE, split_run(args.folders[0])[0], PROJECT_NAME)
+        args.save = os.path.join(OUTPUT_DIR, split_run(args.folders[0])[0], PROJECT_NAME)
     job = {"fps": args.fps, "replace": not args.keep, "save": args.save, "result": RESULT, "scene_fps": args.scene_fps,
            "display_blend": not args.keep_color_settings, "still_seconds": args.still_seconds,
            "shadow_opacity": args.shadow_opacity, "bounce_opacity": args.bounce_opacity,

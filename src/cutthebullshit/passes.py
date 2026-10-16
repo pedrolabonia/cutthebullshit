@@ -1,4 +1,4 @@
-"""Passes step: the shadow and bounce-light passes of every frame, 8-bit sRGB PNGs next to it in tmp_read.
+"""Passes step: the shadow and bounce-light passes of every frame, 8-bit sRGB PNGs next to it in the work folder.
 
 For each developed frame (<seq>_beauty.####.png from prep, 16-bit) with its <seq>_plate and <seq>_subject
 (cleanplate.py) it writes
@@ -16,7 +16,7 @@ The object itself is <seq>_beauty through <seq>_subject (Select Subject), in the
 
 Resumable: frames whose passes are newer than their frame, plate and subject mask are skipped; --force redoes them.
 
-    cutthebullshit passes "<tmp_read>/RUN 01/S01 Kitchen/teapot-anim/v1/RAW"
+    cutthebullshit passes "<work>/RUN 01/S01 Kitchen/teapot-anim/v1/RAW"
 """
 
 import argparse
@@ -49,7 +49,7 @@ def frame_files(folder, seq, num):
 
 
 def frames(folder):
-    """[(seq, num)] of every frame in a tmp_read folder that has a clean plate and a subject mask, or whose passes
+    """[(seq, num)] of every frame in a work folder that has a clean plate and a subject mask, or whose passes
     are already done (its plate is deleted once they are written)."""
     out, missing = [], {}
     for seq, num in fr.frames(folder):
@@ -195,7 +195,7 @@ def do_frame(job):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("folders", nargs="+", help="tmp_read folders with developed frames + _plate + _subject")
+    ap.add_argument("folders", nargs="+", help="work folders with developed frames + _plate + _subject")
     ap.add_argument("--workers", type=int, default=default_workers(PASSES_GB),
                     help="frames worked on at once (default %(default)s: one per core, cores - 2, as many as the RAM holds)")
     ap.add_argument("--force", action="store_true", help="redo frames whose PNGs are already up to date")

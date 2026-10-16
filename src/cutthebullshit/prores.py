@@ -1,7 +1,7 @@
 """Export every stop-motion of a run as ProRes 4444 with alpha, 1920 wide, 24 fps, on 2s.
 
-For every stop-motion sequence in tmp_write/RUN NN/LAYERS (folders named -anim / _anim, more than one frame), writes
-    tmp_write/RUN NN/PRORES/<scene>/<object>/.../<seq>.mov
+For every stop-motion sequence in <output>/RUN NN/LAYERS (folders named -anim / _anim, more than one frame), writes
+    <output>/RUN NN/PRORES/<scene>/<object>/.../<seq>.mov
 from the object PNGs (straight alpha): each PNG is held for --hold frames (default 2: "on 2s", so 12 drawings per
 second at 24 fps). The frames are scaled to 1920 wide keeping their proportions, nothing cropped or padded
 (3:2 frames -> 1920x1280; --width to change). Edges are scaled premultiplied (no dark fringes), the file stays straight alpha; Rec.709 colour tags.
@@ -92,8 +92,7 @@ def main(argv=None):
     ap.add_argument("--hold", type=int, default=2, help="frames each drawing is held (default %(default)s: on 2s)")
     ap.add_argument("--width", type=int, default=1920, help="movie width; height follows the frames' aspect (default %(default)s)")
     ap.add_argument("--passes", default="object", help="comma list of object,multiply,screen (default %(default)s)")
-    ap.add_argument("--out", default=None, help="output root (default tmp_write/RUN NN/PRORES)")
-    # (publish.py runs this before uploading, so the movies in Dropbox always match the published frames)
+    ap.add_argument("--out", default=None, help="output root (default <output>/RUN NN/PRORES)")
     ap.add_argument("--force", action="store_true", help="re-export movies that are up to date")
     args = ap.parse_args(argv)
     passes = [p.strip() for p in args.passes.split(",") if p.strip()]

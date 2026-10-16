@@ -15,7 +15,7 @@ FRAME_STEPS = ("prep", "cleanplate", "passes", "layers")      # steps that work 
 
 def source_frames(src):
     """[(photo, seq, num)] numbered the way prep numbers them."""
-    photos = [f for f in list_frames(src) if f.lower().endswith(".arw")]
+    photos = list_frames(src)
     return [(f,) + tuple(prep.sequence_name(f, i)) for i, f in enumerate(photos, 1)]
 
 

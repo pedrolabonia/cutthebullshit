@@ -21,3 +21,4 @@ dist/
 
 # local settings (paths, job names): keep them out of the repo
 cutthebullshit.toml
+.venv/
