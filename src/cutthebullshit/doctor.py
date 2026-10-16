@@ -107,10 +107,14 @@ def check_apps(ping):
            "can close app dialogs" if supervise.ui_access() else
            "supervise can't close crash / alert dialogs (System Settings > Privacy & Security > Accessibility)")
     if ping:
+        hint = ("no answer: allow your terminal to control it (System Settings > Privacy & Security > Automation), "
+                "and close any dialog open in the app")
         if ps:
-            report("ok" if supervise.ps_ok() else "FAIL", "Photoshop answers", "")
+            ok = supervise.ps_ok()
+            report("ok" if ok else "FAIL", "Photoshop answers", "" if ok else hint)
         if ae:
-            report("ok" if supervise.ae_ok() else "FAIL", "After Effects answers", "")
+            ok = supervise.ae_ok()
+            report("ok" if ok else "FAIL", "After Effects answers", "" if ok else hint)
 
 
 def main(argv=None):
