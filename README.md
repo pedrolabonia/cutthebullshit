@@ -1,5 +1,7 @@
 # cutthebullshit
 
+*English · [Português](README.pt-BR.md)*
+
 Turns photos of objects shot on a table into ready-to-comp cut-outs: each object on its own, plus the shadow it casts
 and the light it bounces onto the table as separate layers. You can drop them over any background and they still look
 like they were shot there. Built for stop-motion: a folder of frames becomes one animated sequence.
