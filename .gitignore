@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+
+# job scripts the steps write for After Effects / Photoshop at run time
+_*.jsx
+
+# learned on each machine (seconds per frame of every step)
+timings.json
+
+# editor / app leftovers
+*.autosave
+*~
+.DS_Store
+._*
+
+# packaging
+build/
+dist/
+*.egg-info/
+
+# local settings (paths, job names): keep them out of the repo
+cutthebullshit.toml

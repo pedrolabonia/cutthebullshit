@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cutthebullshit"
+version = "0.1.0"
+description = "Stop-motion object cut-outs, from RAW photos to After Effects precomps: Photoshop clean plates, OpenCV shadow and light passes, AE precomps with a matte you can fix."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "opencv-python-headless",
+    "rawpy",
+    "imageio-ffmpeg",
+]
+
+[project.optional-dependencies]
+exr = ["OpenEXR"]        # only to keep using runs made before the switch to PNG frames (EXR frames and plates)
+
+[project.scripts]
+cutthebullshit = "cutthebullshit.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+cutthebullshit = ["*.applescript"]

@@ -1,0 +1,23 @@
+# cutthebullshit settings. Copy to ~/.cutthebullshit/config.toml (or ./cutthebullshit.toml where you run it, or point
+# CUTTHEBULLSHIT_CONFIG at it). Every setting is optional; paths accept ~.
+
+# where the work happens: developed frames, masks and passes (tmp_read), layers / previews / AE projects (tmp_write),
+# one "RUN NN" folder per run inside each. A fast local / external drive is best (~60 MB per photo).
+tmp_read  = "~/cutthebullshit-work/tmp_read"
+tmp_write = "~/cutthebullshit-work/tmp_write"
+
+# where `cutthebullshit publish` copies a run (RUN NN inside it), e.g. a shared Dropbox folder. Unset: no publishing.
+# publish_root = "~/Dropbox/My Job/Runs/PUBLISH"
+
+# what the PREVIEW renders and the After Effects scene comps sit on: an image (fit to height), a colour
+# ("#rrggbb", "white", "grey", "0.5", "200,190,170") or "none"
+background = "none"
+
+# the organized photo tree: <source_root>/<scene>/<object>/[v1/]RAW/*.arw. Everything below the folder named mirror_root
+# is recreated inside the RUN folders (unset: the last 3 folders of each RAW folder's path). Stop-motions are folders
+# whose name ends in -anim / _anim; folders named "CUT OUT" are skipped.
+# source_root = "~/Photos/My Job/OBJECTS"
+# mirror_root = "OBJECTS"
+
+# folders the tool must never delete anything in, besides ~/Dropbox (it only adds and overwrites there)
+# protected = ["~/Shared Drives/My Job"]
