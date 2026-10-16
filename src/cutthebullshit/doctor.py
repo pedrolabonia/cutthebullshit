@@ -88,16 +88,16 @@ def check_apps(ping):
         else:
             report("ok" if allowed else "FAIL", "AE scripting", "files + network allowed" if allowed else
                    "turn on Settings > Scripting & Expressions > Allow Scripts to Write Files and Access Network")
+    what, ok_text, warning = apps.DIALOGS
     can = apps.can_close_dialogs()
-    report("ok" if can else "WARN", "Accessibility", "can close app dialogs" if can else
-           "supervise can't close crash / alert dialogs (System Settings > Privacy & Security > Accessibility)")
+    report("ok" if can else "WARN", what, ok_text if can else warning)
+    for level, what, detail in apps.platform_checks():
+        report(level, what, detail)
     if ping:
-        hint = ("no answer: allow your terminal to control it (System Settings > Privacy & Security > Automation), "
-                "and close any dialog open in the app")
         for app, name in (("photoshop", ps), ("ae", ae)):
             if name:
                 ok = apps.app_alive(app)
-                report("ok" if ok else "FAIL", "%s answers" % apps.WHAT[app], "" if ok else hint)
+                report("ok" if ok else "FAIL", "%s answers" % apps.WHAT[app], "" if ok else "no answer: " + apps.NO_ANSWER_HINT)
 
 
 def main(argv=None):
@@ -125,7 +125,7 @@ def main(argv=None):
 
     print("apps")
     if not apps.SUPPORTED:
-        report("FAIL", "platform", apps._backend.WHY)
+        report("FAIL", "platform", "%s: driving Photoshop / After Effects works on macOS and Windows only" % sys.platform)
     else:
         check_apps(args.apps)
 

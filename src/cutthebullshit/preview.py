@@ -10,6 +10,7 @@ import argparse
 import glob
 import os
 import re
+import subprocess
 import sys
 
 import cv2
@@ -21,14 +22,35 @@ PV_RX = re.compile(r"^PREVIEW_(?P<seq>.+)\.(?P<num>\d{4})\.jpg$")
 OBJ_RX = re.compile(r"^(?P<seq>(?!MULTIPLY_|SCREEN_|PREVIEW_|LAYOUT_).+)\.(?P<num>\d{4})\.png$")
 
 
+class FfmpegWriter:
+    """cv2.VideoWriter's write / release, through the ffmpeg of imageio-ffmpeg (libx264): OpenCV's own H.264 needs
+    an OpenH264 library that Windows doesn't have."""
+
+    def __init__(self, path, fps, size):
+        import imageio_ffmpeg
+        self.p = subprocess.Popen([imageio_ffmpeg.get_ffmpeg_exe(), "-hide_banner", "-loglevel", "error", "-y",
+                                   "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", "%dx%d" % size, "-r", str(fps), "-i", "-",
+                                   "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "20", "-movflags", "+faststart",
+                                   "-f", "mp4", path], stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    def write(self, frame):
+        self.p.stdin.write(frame.tobytes())
+
+    def release(self):
+        self.p.stdin.close()
+        err = self.p.stderr.read().decode("utf-8", "replace")
+        if self.p.wait() != 0:
+            raise RuntimeError("ffmpeg: %s" % err.strip()[-300:])
+
+
 def make_mp4(folder, seq, nums, fps, width):
     first = cv2.imread(os.path.join(folder, "PREVIEW_%s.%04d.jpg" % (seq, nums[0])))
     h = int(round(first.shape[0] * width / first.shape[1] / 2)) * 2          # H.264 wants even sizes
     out = os.path.join(folder, "PREVIEW_%s.mp4" % seq)
     tmp = out + ".tmp.mp4"
-    w = cv2.VideoWriter(tmp, cv2.VideoWriter_fourcc(*"avc1"), fps, (width, h))
-    if not w.isOpened():
-        raise RuntimeError("no H.264 encoder (avc1) available")
+    w = cv2.VideoWriter(tmp, cv2.VideoWriter_fourcc(*"avc1"), fps, (width, h)) if sys.platform != "win32" else None
+    if w is None or not w.isOpened():
+        w = FfmpegWriter(tmp, fps, (width, h))
     for n in range(nums[0], nums[-1] + 1):
         img = cv2.imread(os.path.join(folder, "PREVIEW_%s.%04d.jpg" % (seq, n)))
         if img is None:                                   # missing frame: hold the previous one

@@ -17,4 +17,7 @@ find_installed = lambda family: None
 run_ae_script = run_ps_javascript = kill_app = launch_app = close_dialogs = _no
 can_close_dialogs = lambda: False
 keep_awake = lambda: None
-ae_scripting_allowed = lambda: None
+platform_checks = lambda: []
+AE_PREFS = None
+NO_ANSWER_HINT = WHY
+DIALOGS = ("dialogs", "", WHY)

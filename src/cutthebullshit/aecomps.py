@@ -322,7 +322,7 @@ def find_sequences(folder):
 
 def run_jsx(job, work_dir, template=JSX, name="_aecomps.jsx"):
     jsx = os.path.join(work_dir, name)
-    with open(jsx, "w") as fh:
+    with open(jsx, "w", encoding="utf-8") as fh:
         fh.write(template % {"job": json.dumps(job)})
     if os.path.exists(RESULT):
         os.remove(RESULT)
@@ -335,7 +335,7 @@ def run_jsx(job, work_dir, template=JSX, name="_aecomps.jsx"):
     if not os.path.exists(RESULT):
         raise RuntimeError("After Effects wrote no result (is it open? Preferences > Scripting & Expressions > "
                            "'Allow Scripts to Write Files and Access Network')")
-    with open(RESULT) as fh:
+    with open(RESULT, encoding="utf-8", errors="replace") as fh:     # After Effects writes it as UTF-8
         txt = fh.read()
     return txt
 

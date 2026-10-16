@@ -34,10 +34,11 @@ PREFIX = {"object": "", "multiply": "MULTIPLY_", "screen": "SCREEN_"}
 def stopmotions(layers_root, only=()):
     """[(folder, seq, [frame numbers])] for every sequence with > 1 frame below an -anim / _anim folder."""
     out = []
+    only = [os.path.normpath(o) for o in only]          # "S02 Garden/swing-anim" -> this OS's separators
     for d, dirs, files in os.walk(layers_root):
         dirs[:] = sorted(x for x in dirs if not x.startswith(("_", ".")))
         rel = os.path.relpath(d, layers_root)
-        if only and not any(rel == o or rel.startswith(o.rstrip("/") + os.sep) for o in only):
+        if only and not any(rel == o or rel.startswith(o + os.sep) for o in only):
             continue
         if not any(ANIM_RX.search(p) for p in rel.split(os.sep)):
             continue
@@ -59,6 +60,18 @@ def vf(width):
             "scale=out_color_matrix=bt709:out_range=tv,format=yuva444p10le" % scale)
 
 
+def link(src, dst):
+    """A cheap copy of a frame: symlink, else a hard link (Windows only lets admins make symlinks), else a real copy
+    (a hard link can't cross drives)."""
+    try:
+        os.symlink(src, dst)
+    except OSError:
+        try:
+            os.link(src, dst)
+        except OSError:
+            shutil.copyfile(src, dst)
+
+
 def encode(frames, out, fps, hold, width):
     """frames: ordered PNG paths. Each is linked `hold` times into a temp folder, so ffmpeg reads a plain sequence."""
     tmp = tempfile.mkdtemp(prefix="prores_")
@@ -67,7 +80,7 @@ def encode(frames, out, fps, hold, width):
         for f in frames:
             for _ in range(hold):
                 i += 1
-                os.symlink(f, os.path.join(tmp, "f%06d.png" % i))
+                link(f, os.path.join(tmp, "f%06d.png" % i))
         part = out + ".part.mov"
         cmd = [imageio_ffmpeg.get_ffmpeg_exe(), "-hide_banner", "-loglevel", "error", "-y",
                "-framerate", str(fps), "-i", os.path.join(tmp, "f%06d.png"),

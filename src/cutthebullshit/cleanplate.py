@@ -215,7 +215,7 @@ JSX = r"""
 def photoshop_fill(src_tif, dst_tif, polys, work_dir, grow=60, subject=True):
     """Fill (Photoshop Select Subject grown by `grow` px, if subject) + polys with Content-Aware Fill."""
     jsx = os.path.join(work_dir, "_fill.jsx")
-    with open(jsx, "w") as fh:
+    with open(jsx, "w", encoding="utf-8") as fh:
         fh.write(JSX % {"job": json.dumps({"src": src_tif, "dst": dst_tif, "polys": polys, "grow": grow,
                                            "subject": subject})})
     err = ""

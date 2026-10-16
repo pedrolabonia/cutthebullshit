@@ -13,6 +13,8 @@ dependencies = [
     "opencv-python-headless",
     "rawpy",
     "imageio-ffmpeg",
+    "pywin32; sys_platform == 'win32'",       # Windows: drives Photoshop through its COM interface
+    "pywinauto; sys_platform == 'win32'",     # Windows: closes the apps' crash / alert dialogs (supervise)
 ]
 
 [project.optional-dependencies]

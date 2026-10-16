@@ -1,6 +1,8 @@
 # cutthebullshit settings - an example. Copy it to ~/.cutthebullshit/config.toml (used everywhere), or to
 # ./cutthebullshit.toml in the folder you run from, or pass it with `cutthebullshit --config FILE ...`.
 # Every setting is optional (the values below are the defaults unless they say otherwise); paths accept ~.
+# Windows paths: in single quotes ('D:\ctb\work') or with forward slashes ("D:/ctb/work"), since TOML reads a
+# backslash inside double quotes as an escape.
 
 # ---------------------------------------------------------------- folders
 # Where the in-between files go: developed frames, subject masks, shadow / bounce passes. They are also the After

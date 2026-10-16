@@ -44,10 +44,15 @@ PROTECTED = [os.path.realpath(os.path.expanduser(p)) for p in ["~/Dropbox"] + li
 DROPBOX = PROTECTED[0]
 
 
+def _path_key(path):
+    # Windows paths and macOS's default disk ignore case: compare without it (refusing too much is harmless)
+    return os.path.normcase(os.path.realpath(path)).casefold()
+
+
 def in_dropbox(path):
     """True for a path inside a protected (shared / synced) folder."""
-    real = os.path.realpath(path)
-    return any(real.startswith(p + os.sep) for p in PROTECTED)
+    real = _path_key(path)
+    return any(real.startswith(_path_key(p) + os.sep) for p in PROTECTED)
 
 
 def remove_file(path):

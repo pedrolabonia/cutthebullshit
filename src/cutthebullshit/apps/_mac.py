@@ -3,12 +3,16 @@
 Every function takes the app's name as found by apps.find_app ("Adobe After Effects 2026") and the app key
 ("ae" / "photoshop") where it matters; apps/__init__.py is the interface the rest of the pipeline calls."""
 
-import glob
 import os
 import re
 import subprocess
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+AE_PREFS = os.path.expanduser("~/Library/Preferences/Adobe/After Effects")
+NO_ANSWER_HINT = ("allow your terminal to control it (System Settings > Privacy & Security > Automation), "
+                  "and close any dialog open in the app")
+DIALOGS = ("Accessibility", "can close app dialogs",
+           "supervise can't close crash / alert dialogs (System Settings > Privacy & Security > Accessibility)")
 
 
 def find_installed(family):
@@ -95,13 +99,5 @@ def keep_awake():
     subprocess.Popen(["caffeinate", "-dims", "-w", str(os.getpid())], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def ae_scripting_allowed():
-    def ver(p):
-        return [int(x) for x in re.findall(r"\d+", os.path.basename(p))] or [0]
-    root = os.path.expanduser("~/Library/Preferences/Adobe/After Effects")
-    for d in sorted(glob.glob(os.path.join(root, "*")), key=ver, reverse=True):
-        for f in glob.glob(os.path.join(d, "*Prefs.txt")):
-            m = re.search(r'"Pref_SCRIPTING_FILE_NETWORK_SECURITY" = "?(\d+)', open(f, errors="replace").read())
-            if m:
-                return m.group(1) == "1"
-    return None
+def platform_checks():
+    return []

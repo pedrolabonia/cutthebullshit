@@ -11,6 +11,7 @@ The whole run (most of the time this is all you need):
     run          develop -> clean plates -> passes -> layers -> previews -> ProRes -> After Effects, for RAW folders
                  (or scene / object folders above them); skips everything already done
     supervise    the same, unattended over many folders: watchdog, app restarts, retries, whole-run ETA
+    unattended   keeps supervise going until it has finished (restarts it after an error, keeps the machine awake)
 
 One step at a time (what `run` calls, for a re-run or a fix):
     prep         RAWs -> 16-bit <seq>_beauty PNGs (camera look)
@@ -31,7 +32,7 @@ import os
 import sys
 
 COMMANDS = {
-    "run": "pipeline", "supervise": "supervise",
+    "run": "pipeline", "supervise": "supervise", "unattended": "unattended",
     "prep": "prep", "cleanplate": "cleanplate", "passes": "passes", "layers": "layers", "preview": "preview",
     "aecomps": "aecomps", "prores": "prores",
     "status": "status", "qc": "qc", "doctor": "doctor",

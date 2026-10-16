@@ -27,7 +27,6 @@ Summary of failed / partial folders: <output>/RUN NN/_supervise_summary.txt (and
 import argparse
 import json
 import os
-import signal
 import subprocess
 import sys
 import threading
@@ -145,10 +144,11 @@ def run_job(args, label, after=None, eta_file=None, where=""):
     log("start %s" % label)
     left_rx = re.compile(r"remaining ~(\S+)")
     shown = {"t": 0.0}
-    env = dict(os.environ, PYTHONPATH=os.pathsep.join([os.path.dirname(HERE)] + ([os.environ["PYTHONPATH"]]
-                                                                              if os.environ.get("PYTHONPATH") else [])))
-    p = subprocess.Popen([PY, "-u"] + args, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                         start_new_session=True)
+    env = dict(os.environ, PYTHONIOENCODING="utf-8",       # Windows pipes default to the ANSI code page
+               PYTHONPATH=os.pathsep.join([os.path.dirname(HERE)] + ([os.environ["PYTHONPATH"]]
+                                                                     if os.environ.get("PYTHONPATH") else [])))
+    p = subprocess.Popen([PY, "-u"] + args, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                         encoding="utf-8", errors="replace", **apps.process_group())
     st = {"last": time.time(), "step": None}
 
     def reader():
@@ -177,10 +177,7 @@ def run_job(args, label, after=None, eta_file=None, where=""):
                 log("HANG: Photoshop didn't answer twice on the same frame - killing %s" % label)
             else:
                 log("HANG: no output for %d min in step %s - killing %s" % (HANG_MIN, st["step"], label))
-            try:
-                os.killpg(p.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+            apps.kill_tree(p.pid)
             p.wait()
             th.join(5)
             return "hang", st["step"]

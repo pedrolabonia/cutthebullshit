@@ -13,8 +13,8 @@ From a folder of camera photos it makes:
 - **Previews**: JPEGs and an MP4 of each object over your background, and ProRes 4444 movies of the stop-motions.
 - **A QC report** flagging frames where the cut-out probably missed part of the object.
 
-It runs on a Mac and uses Photoshop (Select Subject and Content-Aware Fill) and After Effects; everything else is
-done in Python with OpenCV.
+It runs on macOS (and, new and not yet tested on a real machine, on [Windows](#windows)) and uses Photoshop (Select
+Subject and Content-Aware Fill) and After Effects; everything else is done in Python with OpenCV.
 
 ## How it works
 
@@ -32,18 +32,22 @@ Nothing is ever processed twice: rerun the same folder and only what is missing 
 
 ## Requirements
 
-- **macOS** (Apple silicon or Intel).
+- **macOS** (Apple silicon or Intel), or **Windows 10 / 11** (see [Windows](#windows): written for it, not yet run on
+  a Windows machine).
 - **Adobe Photoshop** and **Adobe After Effects**, installed the normal way from Creative Cloud. Tested with the 2026
   versions; the newest installed version of each is used.
 - **Python 3.11 or newer.** If you don't have it, the install script can fetch one through
   [uv](https://docs.astral.sh/uv/).
 - **Disk space:** about 60 MB per photo for the working files, on a fast drive if you can.
 
-**No plugins, extensions or MCP servers are needed.** The tool controls Photoshop and After Effects with AppleScript,
-which is built into macOS. It runs scripts inside the apps the same way *File > Scripts* would. It only needs the
-setting and permissions in the steps below.
+**No plugins, extensions or MCP servers are needed.** The tool runs scripts inside Photoshop and After Effects the
+same way *File > Scripts* would. On macOS it hands them over with AppleScript, which is built into macOS; on Windows
+with After Effects' own command line and Photoshop's COM interface (through the `pywin32` package, installed for you).
+It only needs the setting and permissions in the steps below.
 
 ## Install
+
+These are the macOS steps. On Windows, follow [Windows](#windows) instead.
 
 **1. Get the code and install it**
 
@@ -104,6 +108,57 @@ It checks the settings, that the work and output folders are writable and have f
 ffmpeg, that both apps are found, the After Effects scripting setting and Accessibility. It also asks both apps to run
 a tiny script, which triggers the Automation prompts from step 3. It ends with `ready`, or with a list of what to fix.
 `cutthebullshit doctor` without `--apps` does the same checks without touching the apps.
+
+## Windows
+
+Windows support is new: the code is written for Windows 10 / 11 but hasn't been run on a Windows machine yet, so the
+first run may need small fixes. Start with `cutthebullshit doctor --apps`.
+
+**1. Install** (in PowerShell):
+
+```powershell
+git clone https://github.com/<you>/cutthebullshit
+cd cutthebullshit
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+```
+
+Like the macOS script, it makes a `.venv` in the repo, installs everything into it (on Windows also `pywin32` and
+`pywinauto`) and runs the setup check. `-Venv D:\envs\ctb` and `-Python C:\path\to\python.exe` choose the place and
+the Python. The command is then `.venv\Scripts\cutthebullshit.exe`. To type just `cutthebullshit`, add that folder to
+your user PATH:
+
+```powershell
+$p = [Environment]::GetEnvironmentVariable("Path", "User")
+[Environment]::SetEnvironmentVariable("Path", "$p;$PWD\.venv\Scripts", "User")
+```
+
+**2. After Effects:** turn on *Allow Scripts to Write Files and Access Network*, as in [Install](#install) step 2.
+
+**3. Run everything as the same user.** Windows has no Automation or Accessibility permissions to grant. Instead,
+Photoshop, After Effects and the PowerShell window must all run normally, or all "as administrator": Windows doesn't
+let a normal program script or click an elevated one.
+
+**4. Settings** go in `%USERPROFILE%\.cutthebullshit\config.toml` (copy `cutthebullshit.example.toml` there). Write
+Windows paths in single quotes, because TOML reads a backslash inside double quotes as an escape:
+`work_dir = 'D:\ctb\work'` (or use forward slashes: `"D:/ctb/work"`).
+
+**5. Check everything:** with Photoshop and After Effects open, `cutthebullshit doctor --apps`.
+
+What else is different:
+
+- **The apps** are looked up in `C:\Program Files\Adobe\Adobe After Effects <year>` and `...\Adobe Photoshop
+  <year>`. Installed somewhere else? Set `after_effects_app` / `photoshop_app` to the full path of `AfterFX.exe` /
+  `Photoshop.exe`.
+- **Short paths:** Windows limits paths to 260 characters unless long paths are turned on; the doctor warns about it.
+  Keep the work and output folders near the top of a drive (`D:\ctb\work`, `D:\ctb\output`).
+- **Quick start:** `.\run_example.ps1 D:\Shoot\teapot-anim` (same options as `run_example.sh`).
+- **Unattended runs:** `cutthebullshit unattended D:\Shoot --new-run --log D:\ctb\shoot.log` in a PowerShell window
+  left open; it keeps the PC awake.
+- **Protected folders:** `~/Dropbox` is `C:\Users\<you>\Dropbox`.
+
+How the apps are driven, for when something needs fixing (all in `src/cutthebullshit/apps/_windows.py`): After
+Effects gets each script through `AfterFX.exe -r`, Photoshop through COM (`Photoshop.Application.DoJavaScript`),
+crash dialogs are closed with `pywinauto`, and hung apps are restarted with `taskkill`.
 
 ## Quick start
 
@@ -245,7 +300,7 @@ Other commands:
 |---|---|
 | `cutthebullshit qc` | flags frames whose cut-out probably went wrong (see [QC](#qc)) |
 | `cutthebullshit status --run 1` | per object of your shoot (`source_root` in the settings): which steps are done, what is missing |
-| `cutthebullshit supervise` | `run` for long unattended jobs (see [below](#long-unattended-runs)) |
+| `cutthebullshit supervise` / `unattended` | `run` for long unattended jobs (see [below](#long-unattended-runs)) |
 | `cutthebullshit doctor` | the setup check |
 | `cutthebullshit <command> -h` | all options of a command |
 
@@ -349,16 +404,24 @@ apps:
 - Progress is kept in `<output>/RUN NN/_supervise.json`, so running it again with the same run number resumes. A
   summary of failures goes to `_supervise_summary.txt`.
 
-[`scripts/run_supervised.sh`](scripts/run_supervised.sh) restarts the supervisor if it ever exits with an error.
-`caffeinate` keeps the Mac awake:
+Start it with `cutthebullshit unattended`, which keeps the supervisor itself going: if it ever stops with an error,
+it is started again a minute later on the same run (up to 20 times), and the computer is kept awake meanwhile.
 
 ```bash
-N=$(.venv/bin/python -c "from cutthebullshit.config import resolve_run; print(resolve_run('new'))")
-PYTHON=.venv/bin/python nohup caffeinate -dims scripts/run_supervised.sh $N ~/Shoot > run$N.log 2>&1 &
-tail -f run$N.log
+cutthebullshit unattended ~/Shoot --new-run --log ~/Desktop/shoot.log
 ```
 
-Closing dialogs needs the Accessibility permission from [Install](#install) step 3.
+Leave the window open. On a Mac you can also start it in the background and follow the log:
+
+```bash
+nohup cutthebullshit unattended ~/Shoot --new-run --log ~/Desktop/shoot.log > /dev/null 2>&1 &
+tail -f ~/Desktop/shoot.log
+```
+
+`--new-run` starts a fresh `RUN NN` once (the restarts continue it), `--run 3` continues run 3, and any other
+`supervise` option (`--no-ae`, `--bg ...`) is passed on.
+
+On macOS, closing dialogs needs the Accessibility permission from [Install](#install) step 3.
 `cutthebullshit supervise --selftest` restarts both apps once to check that this works.
 
 ## ProRes movies
@@ -380,7 +443,9 @@ cutthebullshit prores --run 1 "S02 Garden" --passes object,multiply,screen --for
 | After Effects step does nothing / no result file | turn on *Allow Scripts to Write Files and Access Network* ([Install](#install) step 2); close any open dialog in After Effects |
 | Photoshop errors on every frame | close Photoshop's dialogs; check its scratch disk has free space (*Settings > Scratch Disks*) |
 | photos fail to develop, or are 0 bytes | photos in Dropbox / iCloud may be online-only: make the folder available offline |
-| `Adobe … not found in /Applications` | set `photoshop_app` / `after_effects_app` in the settings to the app's name |
+| `Adobe … not found` | set `photoshop_app` / `after_effects_app` in the settings to the app's name (Windows: the full path of `Photoshop.exe` / `AfterFX.exe`) |
+| Windows: the apps never answer, or dialogs aren't closed | run Photoshop, After Effects and PowerShell as the same user, all normally or all as administrator |
+| Windows: errors about paths that don't exist | the path is longer than 260 characters: shorter work / output folders, or turn on long paths |
 | anything else | `cutthebullshit doctor --apps` |
 
 ## Notes
@@ -391,15 +456,14 @@ cutthebullshit prores --run 1 "S02 Garden" --passes object,multiply,screen --for
 - What the tool learns (time per step) and the scripts it hands to After Effects are kept in `~/.cutthebullshit/`
   (`CUTTHEBULLSHIT_HOME` moves it).
 - Runs made by older versions with EXR frames still work after `pip install -e ".[exr]"`.
-- macOS only for now: the apps are driven with AppleScript. All of that lives in `src/cutthebullshit/apps/`, so
-  Windows support means adding one backend module next to `_mac.py` (After Effects' `AfterFX.exe -r`, Photoshop's COM
-  interface, `taskkill`, `pywinauto` for dialogs).
+- Everything that differs between macOS and Windows lives in `src/cutthebullshit/apps/`: `_mac.py` (AppleScript)
+  and `_windows.py` (`AfterFX.exe -r`, COM, `pywinauto`, `taskkill`). The rest of the pipeline is the same on both.
 
 ```
-src/cutthebullshit/   cli.py (the command), pipeline.py (run), supervise.py, prep.py, cleanplate.py, passes.py,
+src/cutthebullshit/   cli.py (the command), pipeline.py (run), supervise.py, unattended.py, prep.py, cleanplate.py, passes.py,
                       layers.py, preview.py, prores.py, aecomps.py, qc.py, status.py, doctor.py,
                       config.py (settings), frames.py, eta.py, progress.py,
                       apps/ (driving Photoshop and After Effects: the only platform-specific code)
-scripts/              install.sh, run_supervised.sh
-run_example.sh        one folder of photos, start to finish
+scripts/              install.sh (macOS), install.ps1 (Windows)
+run_example.sh        one folder of photos, start to finish (run_example.ps1 on Windows)
 ```
